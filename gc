@@ -168,14 +168,11 @@
         const columnCount = headerRow.children.length;
         const subtableRows = table.querySelectorAll('tr.row-hits td[colspan]');
         subtableRows.forEach(td => {
-            td.setAttribute('colspan', columnCount);
-            console.log(`Обновлён colspan для подтаблицы: ${columnCount}`);
-        });
-        // Применяем CSS для выравнивания
-        document.querySelectorAll('table.table.bg-gray').forEach(table => {
-            table.style.width = '100%';
-            table.style.tableLayout = 'fixed';
-            console.log('Применены стили для подтаблицы');
+            const currentColspan = td.getAttribute('colspan');
+            if (currentColspan !== String(columnCount)) {
+                td.setAttribute('colspan', columnCount);
+                console.log(`Обновлён colspan для подтаблицы с ${currentColspan} на ${columnCount}`);
+            }
         });
     }
 
@@ -235,14 +232,6 @@
 
         // Обновляем colspan для подтаблиц
         updateSubtableColspan();
-
-        // Перехватываем клики на .js-visit-hits для обновления colspan перед разворачиванием
-        document.querySelectorAll('a.js-visit-hits').forEach(link => {
-            link.addEventListener('click', () => {
-                console.log('Клик на .js-visit-hits, обновляем colspan перед разворачиванием подтаблицы');
-                updateSubtableColspan();
-            });
-        });
 
         // Собираем уникальные IP-адреса только из строк главной таблицы
         const rows = Array.from(tbody.querySelectorAll('tr:not(.row-hits)'));
@@ -429,6 +418,9 @@
             isProcessingTable = false;
         }
 
+        // Запускаем отложенную проверку colspan через 500 мс
+        setTimeout(updateSubtableColspan, 500);
+
         return true;
     }
 
@@ -443,18 +435,10 @@
             return;
         }
 
+        let subtableUpdated = false;
         for (const mutation of mutations) {
-            if (mutation.addedNodes.length || mutation.removedNodes.length) {
+            if (mutation.addedNodes.length) {
                 const tableChanged = Array.from(mutation.addedNodes).some(node => 
-                    node.nodeType === 1 && (
-                        node.matches('table.table.table-striped.table-bordered:not(.bg-gray)') ||
-                        node.querySelector('table.table.table-striped.table-bordered:not(.bg-gray)') ||
-                        node.matches('tr:not(.row-hits)') || 
-                        node.querySelector('tr:not(.row-hits)') ||
-                        node.matches('tr.row-hits') ||
-                        node.querySelector('tr.row-hits')
-                    )
-                ) || Array.from(mutation.removedNodes).some(node => 
                     node.nodeType === 1 && (
                         node.matches('table.table.table-striped.table-bordered:not(.bg-gray)') ||
                         node.querySelector('table.table.table-striped.table-bordered:not(.bg-gray)') ||
@@ -468,6 +452,16 @@
                     console.log('Обнаружено изменение в главной таблице или подтаблице #tabContentVisits, запускаем initGeoLookup.');
                     initGeoLookup();
                     break;
+                }
+                // Проверяем новые строки подтаблицы
+                if (!subtableUpdated && Array.from(mutation.addedNodes).some(node => 
+                    node.nodeType === 1 && (node.matches('tr.row-hits') || node.querySelector('tr.row-hits'))
+                )) {
+                    console.log('Обнаружены новые строки подтаблицы, обновляем colspan.');
+                    updateSubtableColspan();
+                    // Запускаем отложенную проверку через 500 мс
+                    setTimeout(updateSubtableColspan, 500);
+                    subtableUpdated = true;
                 }
             }
         }
