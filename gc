@@ -450,22 +450,24 @@
 
         for (const mutation of mutations) {
             if (mutation.addedNodes.length || mutation.removedNodes.length) {
+                // Проверяем изменения только в главной таблице или её строках (не подтаблицах)
                 const mainTableChanged = Array.from(mutation.addedNodes).some(node => 
                     node.nodeType === 1 && (
                         node.matches('table.table.table-striped.table-bordered:not(.bg-gray)') ||
                         node.querySelector('table.table.table-striped.table-bordered:not(.bg-gray)') ||
-                        node.matches('tr:not(.row-hits)') || 
+                        (node.matches('tr') && !node.classList.contains('row-hits')) || 
                         node.querySelector('tr:not(.row-hits)')
                     )
                 ) || Array.from(mutation.removedNodes).some(node => 
                     node.nodeType === 1 && (
                         node.matches('table.table.table-striped.table-bordered:not(.bg-gray)') ||
                         node.querySelector('table.table.table-striped.table-bordered:not(.bg-gray)') ||
-                        node.matches('tr:not(.row-hits)') || 
+                        (node.matches('tr') && !node.classList.contains('row-hits')) || 
                         node.querySelector('tr:not(.row-hits)')
                     )
                 );
 
+                // Проверяем добавление подтаблиц
                 const subTableChanged = Array.from(mutation.addedNodes).some(node => 
                     node.nodeType === 1 && (
                         node.matches('tr.row-hits') || 
