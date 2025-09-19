@@ -230,7 +230,7 @@
             cityTh.after(providerTh);
         }
 
-        // Обновляем colspan для подтаблиц
+        // Обновляем colspan для строк подтаблицы, если они уже есть
         updateSubtableColspan();
 
         // Собираем уникальные IP-адреса только из строк главной таблицы
@@ -418,9 +418,6 @@
             isProcessingTable = false;
         }
 
-        // Запускаем отложенную проверку colspan через 500 мс
-        setTimeout(updateSubtableColspan, 500);
-
         return true;
     }
 
@@ -438,30 +435,34 @@
         let subtableUpdated = false;
         for (const mutation of mutations) {
             if (mutation.addedNodes.length) {
-                const tableChanged = Array.from(mutation.addedNodes).some(node => 
-                    node.nodeType === 1 && (
-                        node.matches('table.table.table-striped.table-bordered:not(.bg-gray)') ||
-                        node.querySelector('table.table.table-striped.table-bordered:not(.bg-gray)') ||
-                        node.matches('tr:not(.row-hits)') || 
-                        node.querySelector('tr:not(.row-hits)') ||
-                        node.matches('tr.row-hits') ||
-                        node.querySelector('tr.row-hits')
-                    )
-                );
-                if (tableChanged) {
-                    console.log('Обнаружено изменение в главной таблице или подтаблице #tabContentVisits, запускаем initGeoLookup.');
-                    initGeoLookup();
-                    break;
-                }
-                // Проверяем новые строки подтаблицы
+                // Проверяем появление подтаблицы
                 if (!subtableUpdated && Array.from(mutation.addedNodes).some(node => 
                     node.nodeType === 1 && (node.matches('tr.row-hits') || node.querySelector('tr.row-hits'))
                 )) {
                     console.log('Обнаружены новые строки подтаблицы, обновляем colspan.');
                     updateSubtableColspan();
-                    // Запускаем отложенную проверку через 500 мс
-                    setTimeout(updateSubtableColspan, 500);
                     subtableUpdated = true;
+                }
+                // Проверяем изменения в главной таблице
+                const tableChanged = Array.from(mutation.addedNodes).some(node => 
+                    node.nodeType === 1 && (
+                        node.matches('table.table.table-striped.table-bordered:not(.bg-gray)') ||
+                        node.querySelector('table.table.table-striped.table-bordered:not(.bg-gray)') ||
+                        node.matches('tr:not(.row-hits)') || 
+                        node.querySelector('tr:not(.row-hits)')
+                    )
+                ) || Array.from(mutation.removedNodes).some(node => 
+                    node.nodeType === 1 && (
+                        node.matches('table.table.table-striped.table-bordered:not(.bg-gray)') ||
+                        node.querySelector('table.table.table-striped.table-bordered:not(.bg-gray)') ||
+                        node.matches('tr:not(.row-hits)') || 
+                        node.querySelector('tr:not(.row-hits)')
+                    )
+                );
+                if (tableChanged) {
+                    console.log('Обнаружено изменение в главной таблице #tabContentVisits, запускаем initGeoLookup.');
+                    initGeoLookup();
+                    break;
                 }
             }
         }
