@@ -11,12 +11,6 @@
     // Логируем HTTPS-контекст для отладки
     console.log('Secure context:', window.isSecureContext, 'Protocol:', location.protocol);
 
-    // Функция для проверки валидности IP-адреса
-    function isValidIP(ip) {
-        const ipRegex = /^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/;
-        return ipRegex.test(ip);
-    }
-
     // Функция для кэширования данных в sessionStorage
     const cacheKeyPrefix = 'geo_ip_';
     function getCachedGeo(ip) {
@@ -121,6 +115,7 @@
         notification.style.zIndex = '1000';
         notification.style.fontSize = '12px';
 
+        // Позиционируем уведомление рядом с элементом
         const rect = targetElement.getBoundingClientRect();
         notification.style.left = `${rect.left + window.scrollX}px`;
         notification.style.top = `${rect.bottom + window.scrollY + 5}px`;
@@ -169,14 +164,14 @@
             return false;
         }
 
-        const table = document.querySelector('table.table.table-striped.table-bordered:not(.bg-gray)');
+        const table = document.querySelector('table.table.table-striped.table-bordered');
         if (!table) {
-            console.log('Главная таблица ещё не найдена, ждём...');
+            console.log('Таблица ещё не найдена, ждём...');
             return false;
         }
 
         isProcessingTable = true;
-        console.log('Главная таблица найдена, запускаем обработку.');
+        console.log('Таблица найдена, запускаем обработку.');
 
         const thead = table.querySelector('thead');
         const tbody = table.querySelector('tbody');
@@ -213,8 +208,14 @@
             cityTh.after(providerTh);
         }
 
-        // Собираем уникальные IP-адреса только из строк главной таблицы
-        const rows = Array.from(tbody.querySelectorAll('tr:not(.row-hits)'));
+        // Обновляем colspan для строк с подтаблицами
+        document.querySelectorAll('tr.row-hits td').forEach(td => {
+            td.setAttribute('colspan', '10');
+            console.log('Обновлён colspan для строки с подтаблицей на 10');
+        });
+
+        // Собираем уникальные IP-адреса
+        const rows = Array.from(tbody.querySelectorAll('tr'));
         const uniqueIPs = new Set();
         rows.forEach(row => {
             const ipTd = row.children[2]; // IP (третий столбец)
