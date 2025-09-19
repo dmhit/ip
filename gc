@@ -213,14 +213,6 @@
             cityTh.after(providerTh);
         }
 
-        // Обновляем colspan для строк подтаблицы
-        const columnCount = headerRow.children.length;
-        const subtableRows = tbody.querySelectorAll('tr.row-hits td[colspan]');
-        subtableRows.forEach(td => {
-            td.setAttribute('colspan', columnCount);
-            console.log(`Обновлён colspan для подтаблицы: ${columnCount}`);
-        });
-
         // Собираем уникальные IP-адреса только из строк главной таблицы
         const rows = Array.from(tbody.querySelectorAll('tr:not(.row-hits)'));
         const uniqueIPs = new Set();
