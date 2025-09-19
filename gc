@@ -456,20 +456,21 @@
                         // Новая главная таблица или её фрагмент
                         node.matches('table.table.table-striped.table-bordered:not(.bg-gray)') ||
                         node.querySelector('table.table.table-striped.table-bordered:not(.bg-gray)') ||
-                        // Замена tbody внутри главной таблицы
+                        // Замена tbody с непустыми строками
                         (node.matches('tbody') && node.closest('table.table.table-striped.table-bordered:not(.bg-gray)') &&
-                         // Проверяем, что изменения в tbody не связаны только с row-hits
-                         Array.from(node.querySelectorAll('tr')).some(tr => !tr.classList.contains('row-hits'))) ||
-                        // Добавление строк, не являющихся row-hits, внутри главной таблицы
-                        (node.matches('tr:not(.row-hits)') && node.closest('table.table.table-striped.table-bordered:not(.bg-gray)'))
+                         Array.from(node.querySelectorAll('tr:not(.row-hits)')).some(tr => tr.querySelector('td'))) ||
+                        // Добавление непустых строк (с ячейками <td>) в главной таблице
+                        (node.matches('tr:not(.row-hits)') && node.closest('table.table.table-striped.table-bordered:not(.bg-gray)') &&
+                         node.querySelector('td'))
                     )
                 ) || Array.from(mutation.removedNodes).some(node => 
                     node.nodeType === 1 && (
                         node.matches('table.table.table-striped.table-bordered:not(.bg-gray)') ||
                         node.querySelector('table.table.table-striped.table-bordered:not(.bg-gray)') ||
                         (node.matches('tbody') && node.closest('table.table.table-striped.table-bordered:not(.bg-gray)') &&
-                         Array.from(node.querySelectorAll('tr')).some(tr => !tr.classList.contains('row-hits'))) ||
-                        (node.matches('tr:not(.row-hits)') && node.closest('table.table.table-striped.table-bordered:not(.bg-gray)'))
+                         Array.from(node.querySelectorAll('tr:not(.row-hits)')).some(tr => tr.querySelector('td'))) ||
+                        (node.matches('tr:not(.row-hits)') && node.closest('table.table.table-striped.table-bordered:not(.bg-gray)') &&
+                         node.querySelector('td'))
                     )
                 );
 
