@@ -203,7 +203,7 @@
             return true;
         }
 
-        // Добавляем новые th элементы после столбца IP (индекс 2)
+        // Добавляем новые th элементы, только если их ещё нет
         const headerRow = thead.querySelector('tr');
         const ipTh = headerRow.children[2];
         if (!ipTh) {
@@ -229,9 +229,6 @@
             providerTh.setAttribute('data-geo', 'provider');
             cityTh.after(providerTh);
         }
-
-        // Обновляем colspan для строк подтаблицы, если они уже есть
-        updateSubtableColspan();
 
         // Собираем уникальные IP-адреса только из строк главной таблицы
         const rows = Array.from(tbody.querySelectorAll('tr:not(.row-hits)'));
@@ -444,7 +441,7 @@
                     subtableUpdated = true;
                 }
                 // Проверяем изменения в главной таблице
-                const tableChanged = Array.from(mutation.addedNodes).some(node => 
+                if (Array.from(mutation.addedNodes).some(node => 
                     node.nodeType === 1 && (
                         node.matches('table.table.table-striped.table-bordered:not(.bg-gray)') ||
                         node.querySelector('table.table.table-striped.table-bordered:not(.bg-gray)') ||
@@ -458,8 +455,7 @@
                         node.matches('tr:not(.row-hits)') || 
                         node.querySelector('tr:not(.row-hits)')
                     )
-                );
-                if (tableChanged) {
+                )) {
                     console.log('Обнаружено изменение в главной таблице #tabContentVisits, запускаем initGeoLookup.');
                     initGeoLookup();
                     break;
