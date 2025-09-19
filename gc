@@ -31,6 +31,16 @@
         console.log(`Сохранены кэшированные данные для IP ${ip}:`, data);
     }
 
+    // Кэш обработанных страниц
+    const pageCacheKeyPrefix = 'geo_page_';
+    function isPageProcessed(page) {
+        return sessionStorage.getItem(pageCacheKeyPrefix + page) === 'processed';
+    }
+    function markPageProcessed(page) {
+        sessionStorage.setItem(pageCacheKeyPrefix + page, 'processed');
+        console.log(`Страница ${page} помечена как обработанная`);
+    }
+
     // Глобальная очередь запросов
     const requestQueue = [];
     let isProcessingQueue = false;
@@ -169,13 +179,16 @@
 
         const totalColumns = headerRow.children.length; // Актуальное кол-во столбцов (10 после добавления)
         const subRows = document.querySelectorAll('tr.row-hits');
+        let adjusted = false;
         subRows.forEach(subRow => {
             const subTd = subRow.querySelector('td[colspan]');
             if (subTd && subTd.getAttribute('colspan') !== totalColumns.toString()) {
                 console.log(`Корректируем colspan для подтаблицы: с ${subTd.getAttribute('colspan')} на ${totalColumns}`);
                 subTd.setAttribute('colspan', totalColumns);
+                adjusted = true;
             }
         });
+        return adjusted;
     }
 
     // Функция, которая запускает логику, когда таблица найдена
@@ -189,6 +202,17 @@
         if (!table) {
             console.log('Главная таблица ещё не найдена, ждём...');
             return false;
+        }
+
+        // Определяем текущую страницу
+        const pageElement = document.querySelector('.pagination .active a[data-page]');
+        const currentPage = pageElement ? (parseInt(pageElement.getAttribute('data-page')) + 1).toString() : '1';
+
+        // Проверяем, обработана ли страница
+        if (isPageProcessed(currentPage)) {
+            console.log(`Страница ${currentPage} уже обработана, пропускаем initGeoLookup.`);
+            adjustSubtableColspan(); // Проверяем подтаблицы на случай их добавления
+            return true;
         }
 
         isProcessingTable = true;
@@ -242,9 +266,7 @@
             }
         });
 
-        // Определяем текущую страницу (первая страница = 1)
-        const pageElement = document.querySelector('.pagination .active a[data-page]');
-        const currentPage = pageElement ? (parseInt(pageElement.getAttribute('data-page')) + 1).toString() : '1';
+        // Автозагрузка только на первой странице
         const autoLoadIPs = currentPage === '1' ? Array.from(uniqueIPs).slice(0, 7) : [];
         console.log(`Найдено ${uniqueIPs.size} уникальных IP, страница ${currentPage}, автоматически загружаем ${autoLoadIPs.length}:`, autoLoadIPs);
 
@@ -392,6 +414,7 @@
                 if (index >= autoLoadIPs.length) {
                     console.log('Автоматическая обработка первых 7 IP завершена.');
                     isProcessingTable = false;
+                    markPageProcessed(currentPage); // Помечаем страницу как обработанную
                     adjustSubtableColspan(); // Корректируем подтаблицы после обработки
                     return;
                 }
@@ -422,6 +445,7 @@
             processNext();
         } else {
             isProcessingTable = false;
+            markPageProcessed(currentPage); // Помечаем страницу как обработанную
             adjustSubtableColspan(); // Корректируем подтаблицы, если нет автозагрузки
         }
 
@@ -440,37 +464,53 @@
             return;
         }
 
+        let tableChanged = false;
+        let subtableAdded = false;
+
         for (const mutation of mutations) {
             if (mutation.addedNodes.length || mutation.removedNodes.length) {
-                const tableChanged = Array.from(mutation.addedNodes).some(node => 
+                // Проверяем, затрагивают ли изменения главную таблицу или её строки
+                const mainTableChanged = Array.from(mutation.addedNodes).some(node => 
                     node.nodeType === 1 && (
                         node.matches('table.table.table-striped.table-bordered:not(.bg-gray)') ||
                         node.querySelector('table.table.table-striped.table-bordered:not(.bg-gray)') ||
                         node.matches('tr:not(.row-hits)') || 
-                        node.querySelector('tr:not(.row-hits)') ||
-                        node.matches('tr.row-hits') || 
-                        node.querySelector('tr.row-hits') ||
-                        node.matches('table.bg-gray') ||
-                        node.querySelector('table.bg-gray')
+                        node.querySelector('tr:not(.row-hits)')
                     )
                 ) || Array.from(mutation.removedNodes).some(node => 
                     node.nodeType === 1 && (
                         node.matches('table.table.table-striped.table-bordered:not(.bg-gray)') ||
                         node.querySelector('table.table.table-striped.table-bordered:not(.bg-gray)') ||
                         node.matches('tr:not(.row-hits)') || 
-                        node.querySelector('tr:not(.row-hits)') ||
-                        node.matches('tr.row-hits') ||
+                        node.querySelector('tr:not(.row-hits)')
+                    )
+                );
+
+                // Проверяем, добавлена ли подтаблица
+                const subTableChanged = Array.from(mutation.addedNodes).some(node => 
+                    node.nodeType === 1 && (
+                        node.matches('tr.row-hits') || 
                         node.querySelector('tr.row-hits') ||
                         node.matches('table.bg-gray') ||
                         node.querySelector('table.bg-gray')
                     )
                 );
-                if (tableChanged) {
-                    console.log('Обнаружено изменение в главной таблице или подтаблице #tabContentVisits, запускаем initGeoLookup.');
-                    initGeoLookup();
-                    break;
+
+                if (mainTableChanged) {
+                    tableChanged = true;
+                }
+                if (subTableChanged) {
+                    subtableAdded = true;
                 }
             }
+        }
+
+        if (tableChanged) {
+            console.log('Обнаружено изменение в главной таблице или её строках, запускаем initGeoLookup.');
+            initGeoLookup();
+        } else if (subtableAdded) {
+            console.log('Обнаружено добавление подтаблицы, корректируем colspan.');
+            adjustSubtableColspan();
         }
     });
 
