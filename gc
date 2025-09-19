@@ -453,12 +453,9 @@
                 // Проверяем изменения, связанные с заменой главной таблицы или её содержимого
                 const mainTableChanged = Array.from(mutation.addedNodes).some(node => 
                     node.nodeType === 1 && (
-                        // Новая главная таблица или её фрагмент
                         node.matches('table.table.table-striped.table-bordered:not(.bg-gray)') ||
                         node.querySelector('table.table.table-striped.table-bordered:not(.bg-gray)') ||
-                        // Замена tbody внутри главной таблицы
                         (node.matches('tbody') && node.closest('table.table.table-striped.table-bordered:not(.bg-gray)')) ||
-                        // Добавление строк, не являющихся row-hits, внутри главной таблицы
                         (node.matches('tr:not(.row-hits)') && node.closest('table.table.table-striped.table-bordered:not(.bg-gray)'))
                     )
                 ) || Array.from(mutation.removedNodes).some(node => 
@@ -479,6 +476,25 @@
                         node.querySelector('table.bg-gray')
                     )
                 );
+
+                // Отладочный лог для анализа узлов
+                if (mainTableChanged) {
+                    console.log('Узлы, вызвавшие mainTableChanged:', 
+                        Array.from(mutation.addedNodes).filter(node => node.nodeType === 1).map(node => ({
+                            tag: node.tagName,
+                            classList: node.classList ? Array.from(node.classList) : [],
+                            id: node.id || 'no-id',
+                            parent: node.parentNode ? node.parentNode.tagName : 'no-parent'
+                        })),
+                        'Removed nodes:', 
+                        Array.from(mutation.removedNodes).filter(node => node.nodeType === 1).map(node => ({
+                            tag: node.tagName,
+                            classList: node.classList ? Array.from(node.classList) : [],
+                            id: node.id || 'no-id',
+                            parent: node.parentNode ? node.parentNode.tagName : 'no-parent'
+                        }))
+                    );
+                }
 
                 if (mainTableChanged) {
                     tableChanged = true;
