@@ -450,26 +450,23 @@
 
         for (const mutation of mutations) {
             if (mutation.addedNodes.length || mutation.removedNodes.length) {
-                // Проверяем изменения, связанные с заменой главной таблицы
-                // (например, при переключении страниц через пагинацию)
+                // Проверяем изменения, связанные с заменой главной таблицы или её содержимого
                 const mainTableChanged = Array.from(mutation.addedNodes).some(node => 
                     node.nodeType === 1 && (
+                        // Новая главная таблица или её фрагмент
                         node.matches('table.table.table-striped.table-bordered:not(.bg-gray)') ||
                         node.querySelector('table.table.table-striped.table-bordered:not(.bg-gray)') ||
-                        // Проверяем добавление tbody или tr, исключая tr.row-hits
+                        // Замена tbody внутри главной таблицы
                         (node.matches('tbody') && node.closest('table.table.table-striped.table-bordered:not(.bg-gray)')) ||
-                        (node.matches('tr') && !node.classList.contains('row-hits') && node.closest('table.table.table-striped.table-bordered:not(.bg-gray)')) ||
-                        node.querySelector('tbody') ||
-                        node.querySelector('tr:not(.row-hits)')
+                        // Добавление строк, не являющихся row-hits, внутри главной таблицы
+                        (node.matches('tr:not(.row-hits)') && node.closest('table.table.table-striped.table-bordered:not(.bg-gray)'))
                     )
                 ) || Array.from(mutation.removedNodes).some(node => 
                     node.nodeType === 1 && (
                         node.matches('table.table.table-striped.table-bordered:not(.bg-gray)') ||
                         node.querySelector('table.table.table-striped.table-bordered:not(.bg-gray)') ||
                         (node.matches('tbody') && node.closest('table.table.table-striped.table-bordered:not(.bg-gray)')) ||
-                        (node.matches('tr') && !node.classList.contains('row-hits') && node.closest('table.table.table-striped.table-bordered:not(.bg-gray)')) ||
-                        node.querySelector('tbody') ||
-                        node.querySelector('tr:not(.row-hits)')
+                        (node.matches('tr:not(.row-hits)') && node.closest('table.table.table-striped.table-bordered:not(.bg-gray)'))
                     )
                 );
 
