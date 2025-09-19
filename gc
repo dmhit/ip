@@ -1,0 +1,422 @@
+(function() {
+    // Плейсхолдер токена, заменяется загрузчиком
+    const TOKEN = '{TOKEN}';
+
+    // Проверяем, соответствует ли текущая страница шаблону
+    if (!window.location.pathname.startsWith('/pl/metrika/user/')) {
+        console.log('Не на целевой странице.');
+        return;
+    }
+
+    // Логируем HTTPS-контекст для отладки
+    console.log('Secure context:', window.isSecureContext, 'Protocol:', location.protocol);
+
+    // Функция для кэширования данных в sessionStorage
+    const cacheKeyPrefix = 'geo_ip_';
+    function getCachedGeo(ip) {
+        const cached = sessionStorage.getItem(cacheKeyPrefix + ip);
+        if (!cached) return null;
+        const data = JSON.parse(cached);
+        console.log(`Используем кэш для IP ${ip}:`, data);
+        return data;
+    }
+    function setCachedGeo(ip, data) {
+        sessionStorage.setItem(cacheKeyPrefix + ip, JSON.stringify(data));
+        console.log(`Сохранены кэшированные данные для IP ${ip}:`, data);
+    }
+
+    // Глобальная очередь запросов
+    const requestQueue = [];
+    let isProcessingQueue = false;
+    const delay = 1000; // Фиксированный интервал 1000 мс
+    const retryDelay = 1500; // 1.5 секунды при 429
+    const maxRetries = 7;
+
+    async function processQueue() {
+        if (isProcessingQueue || requestQueue.length === 0) return;
+        isProcessingQueue = true;
+
+        const { url, resolve, reject, retries, startTime } = requestQueue.shift();
+        try {
+            console.log(`Отправляем запрос: ${url}`);
+            const response = await fetch(url);
+            if (response.status === 429 && retries > 0) {
+                console.log(`429 для ${url}, повтор через ${retryDelay} мс, осталось попыток: ${retries}`);
+                requestQueue.unshift({ url, resolve, reject, retries: retries - 1, startTime });
+                setTimeout(processQueue, retryDelay);
+                isProcessingQueue = false;
+                return;
+            }
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+            const data = await response.json();
+            console.log(`Получены данные для ${url}:`, data);
+            resolve(data);
+        } catch (error) {
+            console.error(`Ошибка для ${url}:`, error);
+            reject(error);
+        } finally {
+            console.log(`Запрос ${url} занял ${Date.now() - startTime} мс, ждём ${delay} мс`);
+            setTimeout(() => {
+                isProcessingQueue = false;
+                processQueue();
+            }, delay);
+        }
+    }
+
+    function queueRequest(url) {
+        return new Promise((resolve, reject) => {
+            requestQueue.push({ url, resolve, reject, retries: maxRetries, startTime: Date.now() });
+            processQueue();
+        });
+    }
+
+    async function fetchGeo(ip) {
+        const cached = getCachedGeo(ip);
+        if (cached) return cached;
+
+        try {
+            const data = await queueRequest(`https://api.2ip.io/${ip}?token=${TOKEN}&lang=ru`);
+            const result = {
+                country: `${data.country || 'N/A'} (${data.code || ''} ${data.emoji || ''})`,
+                city: `${data.city || 'N/A'} (${data.region || ''})`,
+                provider: 'N/A'
+            };
+            setCachedGeo(ip, result);
+            return result;
+        } catch (error) {
+            return { country: 'Ошибка', city: 'Ошибка', provider: 'N/A' };
+        }
+    }
+
+    async function fetchWhois(ip) {
+        try {
+            const data = await queueRequest(`https://api.2ip.io/whois/${ip}?token=${TOKEN}`);
+            const provider = data.whois?.network?.name || 'N/A';
+            const cached = getCachedGeo(ip) || { country: 'N/A', city: 'N/A', provider: 'N/A' };
+            cached.provider = provider;
+            setCachedGeo(ip, cached);
+            return provider;
+        } catch (error) {
+            return 'N/A';
+        }
+    }
+
+    // Функция для отображения временного уведомления
+    function showNotification(message, targetElement) {
+        const notification = document.createElement('div');
+        notification.textContent = message;
+        notification.style.position = 'absolute';
+        notification.style.background = '#333';
+        notification.style.color = '#fff';
+        notification.style.padding = '5px 10px';
+        notification.style.borderRadius = '4px';
+        notification.style.zIndex = '1000';
+        notification.style.fontSize = '12px';
+
+        // Позиционируем уведомление рядом с элементом
+        const rect = targetElement.getBoundingClientRect();
+        notification.style.left = `${rect.left + window.scrollX}px`;
+        notification.style.top = `${rect.bottom + window.scrollY + 5}px`;
+
+        document.body.appendChild(notification);
+        setTimeout(() => {
+            notification.remove();
+        }, 2000);
+    }
+
+    // Функция копирования в буфер обмена
+    function copyToClipboard(text, targetElement) {
+        console.log(`Попытка копирования: ${text}`);
+        try {
+            if (typeof text !== 'string') {
+                throw new Error(`Некорректное значение для копирования: ${text}`);
+            }
+            const textArea = document.createElement('textarea');
+            textArea.value = text;
+            textArea.style.position = 'fixed';
+            textArea.style.opacity = '0';
+            document.body.appendChild(textArea);
+            textArea.select();
+            try {
+                document.execCommand('copy');
+                console.log(`Скопировано в буфер обмена: ${text}`);
+                showNotification(`Скопировано: ${text}`, targetElement);
+            } catch (err) {
+                console.error(`Ошибка копирования для ${text}:`, err);
+                showNotification('Ошибка копирования', targetElement);
+            }
+            document.body.removeChild(textArea);
+        } catch (error) {
+            console.error(`Ошибка копирования для ${text}:`, error);
+            showNotification('Ошибка копирования', targetElement);
+        }
+    }
+
+    // Флаг для предотвращения зацикливания
+    let isProcessingTable = false;
+
+    // Функция, которая запускает логику, когда таблица найдена
+    function initGeoLookup() {
+        if (isProcessingTable) {
+            console.log('Таблица уже обрабатывается, пропускаем.');
+            return false;
+        }
+
+        const table = document.querySelector('table.table.table-striped.table-bordered');
+        if (!table) {
+            console.log('Таблица ещё не найдена, ждём...');
+            return false;
+        }
+
+        isProcessingTable = true;
+        console.log('Таблица найдена, запускаем обработку.');
+
+        const thead = table.querySelector('thead');
+        const tbody = table.querySelector('tbody');
+        if (!thead || !tbody) {
+            console.log('thead или tbody не найдены.');
+            isProcessingTable = false;
+            return true;
+        }
+
+        // Добавляем новые th элементы после столбца IP (индекс 2)
+        const headerRow = thead.querySelector('tr');
+        const ipTh = headerRow.children[2];
+        if (!ipTh) {
+            console.log('th для IP не найден.');
+            isProcessingTable = false;
+            return true;
+        }
+
+        if (!headerRow.querySelector('th[data-geo="country"]')) {
+            console.log('Добавляем заголовки: Страна, Город, Провайдер');
+            const countryTh = document.createElement('th');
+            countryTh.textContent = 'Страна';
+            countryTh.setAttribute('data-geo', 'country');
+            ipTh.after(countryTh);
+
+            const cityTh = document.createElement('th');
+            cityTh.textContent = 'Город';
+            cityTh.setAttribute('data-geo', 'city');
+            countryTh.after(cityTh);
+
+            const providerTh = document.createElement('th');
+            providerTh.textContent = 'Провайдер';
+            providerTh.setAttribute('data-geo', 'provider');
+            cityTh.after(providerTh);
+        }
+
+        // Собираем уникальные IP-адреса
+        const rows = Array.from(tbody.querySelectorAll('tr'));
+        const uniqueIPs = new Set();
+        rows.forEach(row => {
+            const ipTd = row.children[2]; // IP (третий столбец)
+            if (ipTd) {
+                const ip = ipTd.textContent.trim();
+                if (ip) uniqueIPs.add(ip);
+            }
+        });
+
+        // Берем первые 7 IP для автоматической загрузки только на первой странице
+        const allIPs = Array.from(uniqueIPs);
+        const currentPage = document.querySelector('.pagination .active a[data-page]')?.getAttribute('data-page') || '0';
+        const autoLoadIPs = currentPage === '0' ? allIPs.slice(0, 7) : [];
+        console.log(`Найдено ${allIPs.length} уникальных IP, страница ${currentPage}, автоматически загружаем ${autoLoadIPs.length}:`, autoLoadIPs);
+
+        // Добавляем ячейки только для строк, где их ещё нет
+        const addedIPs = new Set();
+        rows.forEach(row => {
+            if (row.children.length === 7) {
+                const ipTd = row.children[2];
+                const ip = ipTd?.textContent.trim();
+                if (ip && !addedIPs.has(ip)) {
+                    console.log(`Добавляем ячейки для IP ${ip}`);
+                    addedIPs.add(ip);
+                }
+                if (ip) {
+                    ipTd.style.cursor = 'pointer';
+                    ipTd.style.textDecoration = 'underline';
+                    ipTd.style.color = 'blue';
+                    ipTd.title = 'Кликните, чтобы скопировать &dev-request-ip=' + ip;
+                    ipTd.onclick = () => copyToClipboard(`&dev-request-ip=${ip}`, ipTd);
+                }
+                const countryTd = document.createElement('td');
+                const cityTd = document.createElement('td');
+                const providerTd = document.createElement('td');
+
+                const cached = ip ? getCachedGeo(ip) : null;
+                if (cached) {
+                    countryTd.innerHTML = cached.country;
+                    cityTd.innerHTML = cached.city;
+                    if (cached.provider !== 'N/A') {
+                        providerTd.innerHTML = cached.provider;
+                    } else {
+                        const loadProviderButton = document.createElement('button');
+                        loadProviderButton.textContent = 'Загрузить';
+                        loadProviderButton.setAttribute('data-ip', ip);
+                        loadProviderButton.onclick = async () => {
+                            loadProviderButton.disabled = true;
+                            loadProviderButton.textContent = 'Загрузка...';
+                            const ip = loadProviderButton.getAttribute('data-ip');
+                            const provider = await fetchWhois(ip);
+                            rows.forEach(r => {
+                                if (r.children[2].textContent.trim() === ip) {
+                                    r.children[5].innerHTML = provider;
+                                }
+                            });
+                        };
+                        providerTd.appendChild(loadProviderButton);
+                    }
+                } else {
+                    if (autoLoadIPs.includes(ip)) {
+                        countryTd.textContent = 'Загрузка...';
+                        cityTd.textContent = 'Загрузка...';
+                    } else {
+                        const loadGeoButton = document.createElement('button');
+                        loadGeoButton.textContent = 'Загрузить';
+                        loadGeoButton.setAttribute('data-ip', ip);
+                        loadGeoButton.onclick = async () => {
+                            loadGeoButton.disabled = true;
+                            loadGeoButton.textContent = 'Загрузка...';
+                            const ip = loadGeoButton.getAttribute('data-ip');
+                            const geoData = await fetchGeo(ip);
+                            rows.forEach(r => {
+                                if (r.children[2].textContent.trim() === ip) {
+                                    r.children[3].innerHTML = geoData.country;
+                                    r.children[4].innerHTML = geoData.city;
+                                    // Провайдер не меняется
+                                }
+                            });
+                        };
+                        countryTd.appendChild(loadGeoButton);
+                        cityTd.textContent = 'Загрузка...';
+                    }
+                    const loadProviderButton = document.createElement('button');
+                    loadProviderButton.textContent = 'Загрузить';
+                    loadProviderButton.setAttribute('data-ip', ip);
+                    loadProviderButton.onclick = async () => {
+                        loadProviderButton.disabled = true;
+                        loadProviderButton.textContent = 'Загрузка...';
+                        const ip = loadProviderButton.getAttribute('data-ip');
+                        const provider = await fetchWhois(ip);
+                        rows.forEach(r => {
+                            if (r.children[2].textContent.trim() === ip) {
+                                r.children[5].innerHTML = provider;
+                            }
+                        });
+                    };
+                    providerTd.appendChild(loadProviderButton);
+                }
+
+                ipTd.after(countryTd);
+                countryTd.after(cityTd);
+                cityTd.after(providerTd);
+            }
+        });
+
+        // Автоматическая загрузка первых 7 IP (только на первой странице)
+        async function processIP(ip) {
+            console.log(`Начинаем обработку IP ${ip}`);
+            const geoData = await fetchGeo(ip);
+            rows.forEach(row => {
+                const ipTd = row.children[2];
+                if (ipTd && ipTd.textContent.trim() === ip) {
+                    const countryTd = row.children[3];
+                    const cityTd = row.children[4];
+                    console.log(`Обновляем строку для IP ${ip}:`, geoData);
+                    if (countryTd) {
+                        countryTd.innerHTML = geoData.country;
+                        console.log(`Установлено country для IP ${ip}: ${countryTd.innerHTML}`);
+                    }
+                    if (cityTd) {
+                        cityTd.innerHTML = geoData.city;
+                        console.log(`Установлено city для IP ${ip}: ${cityTd.innerHTML}`);
+                    }
+                }
+            });
+        }
+
+        if (autoLoadIPs.length > 0) {
+            let index = 0;
+            function processNext() {
+                if (index >= autoLoadIPs.length) {
+                    console.log('Автоматическая обработка первых 7 IP завершена.');
+                    isProcessingTable = false;
+                    return;
+                }
+
+                const ip = autoLoadIPs[index];
+                console.log(`Запускаем processIP для ${ip}`);
+                processIP(ip).then(() => {
+                    index++;
+                    console.log(`Обработан IP ${ip}, переходим к следующему (${index}/${autoLoadIPs.length})`);
+                    processNext();
+                }).catch(error => {
+                    console.error(`Ошибка в processNext для IP ${ip}:`, error);
+                    rows.forEach(row => {
+                        const ipTd = row.children[2];
+                        if (ipTd && ipTd.textContent.trim() === ip) {
+                            row.children[3].innerHTML = 'Ошибка';
+                            row.children[4].innerHTML = 'Ошибка';
+                            console.log(`Установлено ошибка для IP ${ip}`);
+                        }
+                    });
+                    index++;
+                    console.log(`Ошибка для IP ${ip}, переходим к следующему (${index}/${autoLoadIPs.length})`);
+                    processNext();
+                });
+            }
+
+            console.log('Запускаем автоматическую загрузку первых 7 IP');
+            processNext();
+        } else {
+            isProcessingTable = false;
+        }
+
+        return true;
+    }
+
+    // Запускаем сразу, если таблица уже есть
+    initGeoLookup();
+
+    // Настраиваем MutationObserver для отслеживания изменений в #tabContentVisits
+    const targetNode = document.querySelector('#tabContentVisits') || document.body;
+    const observer = new MutationObserver((mutations) => {
+        if (isProcessingTable) {
+            console.log('MutationObserver: Таблица обрабатывается, пропускаем изменения.');
+            return;
+        }
+
+        for (const mutation of mutations) {
+            if (mutation.addedNodes.length || mutation.removedNodes.length) {
+                const tableChanged = Array.from(mutation.addedNodes).some(node => 
+                    node.nodeType === 1 && (
+                        node.matches('table.table.table-striped.table-bordered') ||
+                        node.querySelector('table.table.table-striped.table-bordered') ||
+                        node.matches('tr') || node.querySelector('tr')
+                    )
+                ) || Array.from(mutation.removedNodes).some(node => 
+                    node.nodeType === 1 && (
+                        node.matches('table.table.table-striped.table-bordered') ||
+                        node.querySelector('table.table.table-striped.table-bordered') ||
+                        node.matches('tr') || node.querySelector('tr')
+                    )
+                );
+                if (tableChanged) {
+                    console.log('Обнаружено изменение в таблице #tabContentVisits, запускаем initGeoLookup.');
+                    initGeoLookup();
+                    break;
+                }
+            }
+        }
+    });
+
+    observer.observe(targetNode, {
+        childList: true,
+        subtree: true
+    });
+
+    console.log('MutationObserver запущен, отслеживаем #tabContentVisits.');
+})();
