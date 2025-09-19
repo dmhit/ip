@@ -162,6 +162,22 @@
     // Флаг для предотвращения зацикливания
     let isProcessingTable = false;
 
+    // Функция для корректировки colspan в подтаблицах
+    function adjustSubtableColspan() {
+        const headerRow = document.querySelector('table.table.table-striped.table-bordered:not(.bg-gray) thead tr');
+        if (!headerRow) return;
+
+        const totalColumns = headerRow.children.length; // Актуальное кол-во столбцов (10 после добавления)
+        const subRows = document.querySelectorAll('tr.row-hits');
+        subRows.forEach(subRow => {
+            const subTd = subRow.querySelector('td[colspan]');
+            if (subTd && subTd.getAttribute('colspan') !== totalColumns.toString()) {
+                console.log(`Корректируем colspan для подтаблицы: с ${subTd.getAttribute('colspan')} на ${totalColumns}`);
+                subTd.setAttribute('colspan', totalColumns);
+            }
+        });
+    }
+
     // Функция, которая запускает логику, когда таблица найдена
     function initGeoLookup() {
         if (isProcessingTable) {
@@ -358,6 +374,7 @@
                 if (index >= autoLoadIPs.length) {
                     console.log('Автоматическая обработка первых 7 IP завершена.');
                     isProcessingTable = false;
+                    adjustSubtableColspan(); // Корректируем подтаблицы после обработки
                     return;
                 }
 
@@ -387,6 +404,7 @@
             processNext();
         } else {
             isProcessingTable = false;
+            adjustSubtableColspan(); // Корректируем подтаблицы, если нет автозагрузки
         }
 
         return true;
@@ -394,6 +412,7 @@
 
     // Запускаем сразу, если таблица уже есть
     initGeoLookup();
+    adjustSubtableColspan(); // На случай, если подтаблицы уже загружены
 
     // Настраиваем MutationObserver для отслеживания изменений в #tabContentVisits
     const targetNode = document.querySelector('#tabContentVisits') || document.body;
@@ -410,18 +429,26 @@
                         node.matches('table.table.table-striped.table-bordered:not(.bg-gray)') ||
                         node.querySelector('table.table.table-striped.table-bordered:not(.bg-gray)') ||
                         node.matches('tr:not(.row-hits)') || 
-                        node.querySelector('tr:not(.row-hits)')
+                        node.querySelector('tr:not(.row-hits)') ||
+                        node.matches('tr.row-hits') || // Добавлено для подтаблиц
+                        node.querySelector('tr.row-hits') ||
+                        node.matches('table.bg-gray') ||
+                        node.querySelector('table.bg-gray')
                     )
                 ) || Array.from(mutation.removedNodes).some(node => 
                     node.nodeType === 1 && (
                         node.matches('table.table.table-striped.table-bordered:not(.bg-gray)') ||
                         node.querySelector('table.table.table-striped.table-bordered:not(.bg-gray)') ||
                         node.matches('tr:not(.row-hits)') || 
-                        node.querySelector('tr:not(.row-hits)')
+                        node.querySelector('tr:not(.row-hits)') ||
+                        node.matches('tr.row-hits') ||
+                        node.querySelector('tr.row-hits') ||
+                        node.matches('table.bg-gray') ||
+                        node.querySelector('table.bg-gray')
                     )
                 );
                 if (tableChanged) {
-                    console.log('Обнаружено изменение в главной таблице #tabContentVisits, запускаем initGeoLookup.');
+                    console.log('Обнаружено изменение в главной таблице или подтаблице #tabContentVisits, запускаем initGeoLookup.');
                     initGeoLookup();
                     break;
                 }
