@@ -11,6 +11,12 @@
     // Логируем HTTPS-контекст для отладки
     console.log('Secure context:', window.isSecureContext, 'Protocol:', location.protocol);
 
+    // Функция для проверки валидности IP-адреса
+    function isValidIP(ip) {
+        const ipRegex = /^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/;
+        return ipRegex.test(ip);
+    }
+
     // Функция для кэширования данных в sessionStorage
     const cacheKeyPrefix = 'geo_ip_';
     function getCachedGeo(ip) {
@@ -115,7 +121,6 @@
         notification.style.zIndex = '1000';
         notification.style.fontSize = '12px';
 
-        // Позиционируем уведомление рядом с элементом
         const rect = targetElement.getBoundingClientRect();
         notification.style.left = `${rect.left + window.scrollX}px`;
         notification.style.top = `${rect.bottom + window.scrollY + 5}px`;
@@ -164,14 +169,14 @@
             return false;
         }
 
-        const table = document.querySelector('table.table.table-striped.table-bordered');
+        const table = document.querySelector('table.table.table-striped.table-bordered:not(.bg-gray)');
         if (!table) {
-            console.log('Таблица ещё не найдена, ждём...');
+            console.log('Главная таблица ещё не найдена, ждём...');
             return false;
         }
 
         isProcessingTable = true;
-        console.log('Таблица найдена, запускаем обработку.');
+        console.log('Главная таблица найдена, запускаем обработку.');
 
         const thead = table.querySelector('thead');
         const tbody = table.querySelector('tbody');
@@ -208,14 +213,16 @@
             cityTh.after(providerTh);
         }
 
-        // Собираем уникальные IP-адреса
-        const rows = Array.from(tbody.querySelectorAll('tr'));
+        // Собираем уникальные IP-адреса только из строк главной таблицы
+        const rows = Array.from(tbody.querySelectorAll('tr:not(.row-hits)'));
         const uniqueIPs = new Set();
         rows.forEach(row => {
             const ipTd = row.children[2]; // IP (третий столбец)
             if (ipTd) {
                 const ip = ipTd.textContent.trim();
-                if (ip) uniqueIPs.add(ip);
+                if (ip && isValidIP(ip)) {
+                    uniqueIPs.add(ip);
+                }
             }
         });
 
@@ -228,14 +235,14 @@
         // Добавляем ячейки только для строк, где их ещё нет
         const addedIPs = new Set();
         rows.forEach(row => {
-            if (row.children.length === 7) {
+            if (!row.querySelector('td[data-geo="country"]')) {
                 const ipTd = row.children[2];
                 const ip = ipTd?.textContent.trim();
-                if (ip && !addedIPs.has(ip)) {
+                if (ip && isValidIP(ip) && !addedIPs.has(ip)) {
                     console.log(`Добавляем ячейки для IP ${ip}`);
                     addedIPs.add(ip);
                 }
-                if (ip) {
+                if (ip && isValidIP(ip)) {
                     ipTd.style.cursor = 'pointer';
                     ipTd.style.textDecoration = 'underline';
                     ipTd.style.color = 'blue';
@@ -243,10 +250,13 @@
                     ipTd.onclick = () => copyToClipboard(`&dev-request-ip=${ip}`, ipTd);
                 }
                 const countryTd = document.createElement('td');
+                countryTd.setAttribute('data-geo', 'country');
                 const cityTd = document.createElement('td');
+                cityTd.setAttribute('data-geo', 'city');
                 const providerTd = document.createElement('td');
+                providerTd.setAttribute('data-geo', 'provider');
 
-                const cached = ip ? getCachedGeo(ip) : null;
+                const cached = ip && isValidIP(ip) ? getCachedGeo(ip) : null;
                 if (cached) {
                     countryTd.innerHTML = cached.country;
                     cityTd.innerHTML = cached.city;
@@ -263,17 +273,17 @@
                             const provider = await fetchWhois(ip);
                             rows.forEach(r => {
                                 if (r.children[2].textContent.trim() === ip) {
-                                    r.children[5].innerHTML = provider;
+                                    r.querySelector('td[data-geo="provider"]').innerHTML = provider;
                                 }
                             });
                         };
                         providerTd.appendChild(loadProviderButton);
                     }
                 } else {
-                    if (autoLoadIPs.includes(ip)) {
+                    if (ip && isValidIP(ip) && autoLoadIPs.includes(ip)) {
                         countryTd.textContent = 'Загрузка...';
                         cityTd.textContent = 'Загрузка...';
-                    } else {
+                    } else if (ip && isValidIP(ip)) {
                         const loadGeoButton = document.createElement('button');
                         loadGeoButton.textContent = 'Загрузить';
                         loadGeoButton.setAttribute('data-ip', ip);
@@ -284,8 +294,8 @@
                             const geoData = await fetchGeo(ip);
                             rows.forEach(r => {
                                 if (r.children[2].textContent.trim() === ip) {
-                                    r.children[3].innerHTML = geoData.country;
-                                    r.children[4].innerHTML = geoData.city;
+                                    r.querySelector('td[data-geo="country"]').innerHTML = geoData.country;
+                                    r.querySelector('td[data-geo="city"]').innerHTML = geoData.city;
                                     // Провайдер не меняется
                                 }
                             });
@@ -293,26 +303,30 @@
                         countryTd.appendChild(loadGeoButton);
                         cityTd.textContent = 'Загрузка...';
                     }
-                    const loadProviderButton = document.createElement('button');
-                    loadProviderButton.textContent = 'Загрузить';
-                    loadProviderButton.setAttribute('data-ip', ip);
-                    loadProviderButton.onclick = async () => {
-                        loadProviderButton.disabled = true;
-                        loadProviderButton.textContent = 'Загрузка...';
-                        const ip = loadProviderButton.getAttribute('data-ip');
-                        const provider = await fetchWhois(ip);
-                        rows.forEach(r => {
-                            if (r.children[2].textContent.trim() === ip) {
-                                r.children[5].innerHTML = provider;
-                            }
-                        });
-                    };
-                    providerTd.appendChild(loadProviderButton);
+                    if (ip && isValidIP(ip)) {
+                        const loadProviderButton = document.createElement('button');
+                        loadProviderButton.textContent = 'Загрузить';
+                        loadProviderButton.setAttribute('data-ip', ip);
+                        loadProviderButton.onclick = async () => {
+                            loadProviderButton.disabled = true;
+                            loadProviderButton.textContent = 'Загрузка...';
+                            const ip = loadProviderButton.getAttribute('data-ip');
+                            const provider = await fetchWhois(ip);
+                            rows.forEach(r => {
+                                if (r.children[2].textContent.trim() === ip) {
+                                    r.querySelector('td[data-geo="provider"]').innerHTML = provider;
+                                }
+                            });
+                        };
+                        providerTd.appendChild(loadProviderButton);
+                    }
                 }
 
-                ipTd.after(countryTd);
-                countryTd.after(cityTd);
-                cityTd.after(providerTd);
+                if (ip && isValidIP(ip)) {
+                    ipTd.after(countryTd);
+                    countryTd.after(cityTd);
+                    cityTd.after(providerTd);
+                }
             }
         });
 
@@ -323,8 +337,8 @@
             rows.forEach(row => {
                 const ipTd = row.children[2];
                 if (ipTd && ipTd.textContent.trim() === ip) {
-                    const countryTd = row.children[3];
-                    const cityTd = row.children[4];
+                    const countryTd = row.querySelector('td[data-geo="country"]');
+                    const cityTd = row.querySelector('td[data-geo="city"]');
                     console.log(`Обновляем строку для IP ${ip}:`, geoData);
                     if (countryTd) {
                         countryTd.innerHTML = geoData.country;
@@ -358,8 +372,8 @@
                     rows.forEach(row => {
                         const ipTd = row.children[2];
                         if (ipTd && ipTd.textContent.trim() === ip) {
-                            row.children[3].innerHTML = 'Ошибка';
-                            row.children[4].innerHTML = 'Ошибка';
+                            row.querySelector('td[data-geo="country"]').innerHTML = 'Ошибка';
+                            row.querySelector('td[data-geo="city"]').innerHTML = 'Ошибка';
                             console.log(`Установлено ошибка для IP ${ip}`);
                         }
                     });
@@ -393,19 +407,21 @@
             if (mutation.addedNodes.length || mutation.removedNodes.length) {
                 const tableChanged = Array.from(mutation.addedNodes).some(node => 
                     node.nodeType === 1 && (
-                        node.matches('table.table.table-striped.table-bordered') ||
-                        node.querySelector('table.table.table-striped.table-bordered') ||
-                        node.matches('tr') || node.querySelector('tr')
+                        node.matches('table.table.table-striped.table-bordered:not(.bg-gray)') ||
+                        node.querySelector('table.table.table-striped.table-bordered:not(.bg-gray)') ||
+                        node.matches('tr:not(.row-hits)') || 
+                        node.querySelector('tr:not(.row-hits)')
                     )
                 ) || Array.from(mutation.removedNodes).some(node => 
                     node.nodeType === 1 && (
-                        node.matches('table.table.table-striped.table-bordered') ||
-                        node.querySelector('table.table.table-striped.table-bordered') ||
-                        node.matches('tr') || node.querySelector('tr')
+                        node.matches('table.table.table-striped.table-bordered:not(.bg-gray)') ||
+                        node.querySelector('table.table.table-striped.table-bordered:not(.bg-gray)') ||
+                        node.matches('tr:not(.row-hits)') || 
+                        node.querySelector('tr:not(.row-hits)')
                     )
                 );
                 if (tableChanged) {
-                    console.log('Обнаружено изменение в таблице #tabContentVisits, запускаем initGeoLookup.');
+                    console.log('Обнаружено изменение в главной таблице #tabContentVisits, запускаем initGeoLookup.');
                     initGeoLookup();
                     break;
                 }
