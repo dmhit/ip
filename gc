@@ -159,6 +159,26 @@
         }
     }
 
+    // Функция для обновления colspan подтаблицы
+    function updateSubtableColspan() {
+        const table = document.querySelector('table.table.table-striped.table-bordered:not(.bg-gray)');
+        if (!table) return;
+        const headerRow = table.querySelector('thead tr');
+        if (!headerRow) return;
+        const columnCount = headerRow.children.length;
+        const subtableRows = table.querySelectorAll('tr.row-hits td[colspan]');
+        subtableRows.forEach(td => {
+            td.setAttribute('colspan', columnCount);
+            console.log(`Обновлён colspan для подтаблицы: ${columnCount}`);
+        });
+        // Применяем CSS для выравнивания
+        document.querySelectorAll('table.table.bg-gray').forEach(table => {
+            table.style.width = '100%';
+            table.style.tableLayout = 'fixed';
+            console.log('Применены стили для подтаблицы');
+        });
+    }
+
     // Флаг для предотвращения зацикливания
     let isProcessingTable = false;
 
@@ -213,12 +233,15 @@
             cityTh.after(providerTh);
         }
 
-        // Обновляем colspan для строк подтаблицы
-        const columnCount = headerRow.children.length;
-        const subtableRows = tbody.querySelectorAll('tr.row-hits td[colspan]');
-        subtableRows.forEach(td => {
-            td.setAttribute('colspan', columnCount);
-            console.log(`Обновлён colspan для подтаблицы: ${columnCount}`);
+        // Обновляем colspan для подтаблиц
+        updateSubtableColspan();
+
+        // Перехватываем клики на .js-visit-hits для обновления colspan перед разворачиванием
+        document.querySelectorAll('a.js-visit-hits').forEach(link => {
+            link.addEventListener('click', () => {
+                console.log('Клик на .js-visit-hits, обновляем colspan перед разворачиванием подтаблицы');
+                updateSubtableColspan();
+            });
         });
 
         // Собираем уникальные IP-адреса только из строк главной таблицы
