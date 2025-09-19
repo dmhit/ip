@@ -202,7 +202,7 @@
             return true;
         }
 
-        // Добавляем новые th элементы после столбца IP (индекс 2)
+        // Добавляем новые th элементы после столбца IP (индекс 2), если их ещё нет
         const headerRow = thead.querySelector('tr');
         const ipTh = headerRow.children[2];
         if (!ipTh) {
@@ -242,18 +242,30 @@
             }
         });
 
-        // Берем первые 7 IP для автоматической загрузки только на первой странице
-        const allIPs = Array.from(uniqueIPs);
-        const currentPage = document.querySelector('.pagination .active a[data-page]')?.getAttribute('data-page') || '0';
-        const autoLoadIPs = currentPage === '0' ? allIPs.slice(0, 7) : [];
-        console.log(`Найдено ${allIPs.length} уникальных IP, страница ${currentPage}, автоматически загружаем ${autoLoadIPs.length}:`, autoLoadIPs);
+        // Определяем текущую страницу (первая страница = 1)
+        const pageElement = document.querySelector('.pagination .active a[data-page]');
+        const currentPage = pageElement ? (parseInt(pageElement.getAttribute('data-page')) + 1).toString() : '1';
+        const autoLoadIPs = currentPage === '1' ? Array.from(uniqueIPs).slice(0, 7) : [];
+        console.log(`Найдено ${uniqueIPs.size} уникальных IP, страница ${currentPage}, автоматически загружаем ${autoLoadIPs.length}:`, autoLoadIPs);
 
         // Добавляем ячейки только для строк, где их ещё нет
         const addedIPs = new Set();
         rows.forEach(row => {
-            if (!row.querySelector('td[data-geo="country"]')) {
-                const ipTd = row.children[2];
-                const ip = ipTd?.textContent.trim();
+            const ipTd = row.children[2];
+            const ip = ipTd?.textContent.trim();
+            const countryTd = row.querySelector('td[data-geo="country"]');
+            const cityTd = row.querySelector('td[data-geo="city"]');
+            const providerTd = row.querySelector('td[data-geo="provider"]');
+
+            // Пропускаем, если ячейки уже заполнены и не в состоянии "Загрузка..."
+            if (countryTd && cityTd && providerTd &&
+                countryTd.innerHTML && cityTd.innerHTML && providerTd.innerHTML &&
+                countryTd.innerHTML !== 'Загрузка...' && cityTd.innerHTML !== 'Загрузка...') {
+                console.log(`Пропускаем строку для IP ${ip}: данные уже заполнены`);
+                return;
+            }
+
+            if (!countryTd) {
                 if (ip && isValidIP(ip) && !addedIPs.has(ip)) {
                     console.log(`Добавляем ячейки для IP ${ip}`);
                     addedIPs.add(ip);
@@ -265,19 +277,19 @@
                     ipTd.title = 'Кликните, чтобы скопировать &dev-request-ip=' + ip;
                     ipTd.onclick = () => copyToClipboard(`&dev-request-ip=${ip}`, ipTd);
                 }
-                const countryTd = document.createElement('td');
-                countryTd.setAttribute('data-geo', 'country');
-                const cityTd = document.createElement('td');
-                cityTd.setAttribute('data-geo', 'city');
-                const providerTd = document.createElement('td');
-                providerTd.setAttribute('data-geo', 'provider');
+                const newCountryTd = document.createElement('td');
+                newCountryTd.setAttribute('data-geo', 'country');
+                const newCityTd = document.createElement('td');
+                newCityTd.setAttribute('data-geo', 'city');
+                const newProviderTd = document.createElement('td');
+                newProviderTd.setAttribute('data-geo', 'provider');
 
                 const cached = ip && isValidIP(ip) ? getCachedGeo(ip) : null;
                 if (cached) {
-                    countryTd.innerHTML = cached.country;
-                    cityTd.innerHTML = cached.city;
+                    newCountryTd.innerHTML = cached.country;
+                    newCityTd.innerHTML = cached.city;
                     if (cached.provider !== 'N/A') {
-                        providerTd.innerHTML = cached.provider;
+                        newProviderTd.innerHTML = cached.provider;
                     } else {
                         const loadProviderButton = document.createElement('button');
                         loadProviderButton.textContent = 'Загрузить';
@@ -293,12 +305,12 @@
                                 }
                             });
                         };
-                        providerTd.appendChild(loadProviderButton);
+                        newProviderTd.appendChild(loadProviderButton);
                     }
                 } else {
                     if (ip && isValidIP(ip) && autoLoadIPs.includes(ip)) {
-                        countryTd.textContent = 'Загрузка...';
-                        cityTd.textContent = 'Загрузка...';
+                        newCountryTd.textContent = 'Загрузка...';
+                        newCityTd.textContent = 'Загрузка...';
                     } else if (ip && isValidIP(ip)) {
                         const loadGeoButton = document.createElement('button');
                         loadGeoButton.textContent = 'Загрузить';
@@ -316,8 +328,8 @@
                                 }
                             });
                         };
-                        countryTd.appendChild(loadGeoButton);
-                        cityTd.textContent = 'Загрузка...';
+                        newCountryTd.appendChild(loadGeoButton);
+                        newCityTd.textContent = 'Загрузка...';
                     }
                     if (ip && isValidIP(ip)) {
                         const loadProviderButton = document.createElement('button');
@@ -334,14 +346,14 @@
                                 }
                             });
                         };
-                        providerTd.appendChild(loadProviderButton);
+                        newProviderTd.appendChild(loadProviderButton);
                     }
                 }
 
                 if (ip && isValidIP(ip)) {
-                    ipTd.after(countryTd);
-                    countryTd.after(cityTd);
-                    cityTd.after(providerTd);
+                    ipTd.after(newCountryTd);
+                    newCountryTd.after(newCityTd);
+                    newCityTd.after(newProviderTd);
                 }
             }
         });
@@ -355,6 +367,12 @@
                 if (ipTd && ipTd.textContent.trim() === ip) {
                     const countryTd = row.querySelector('td[data-geo="country"]');
                     const cityTd = row.querySelector('td[data-geo="city"]');
+                    // Пропускаем обновление, если данные уже заполнены
+                    if (countryTd.innerHTML && cityTd.innerHTML && 
+                        countryTd.innerHTML !== 'Загрузка...' && cityTd.innerHTML !== 'Загрузка...') {
+                        console.log(`Пропускаем обновление для IP ${ip}: данные уже есть`);
+                        return;
+                    }
                     console.log(`Обновляем строку для IP ${ip}:`, geoData);
                     if (countryTd) {
                         countryTd.innerHTML = geoData.country;
@@ -430,7 +448,7 @@
                         node.querySelector('table.table.table-striped.table-bordered:not(.bg-gray)') ||
                         node.matches('tr:not(.row-hits)') || 
                         node.querySelector('tr:not(.row-hits)') ||
-                        node.matches('tr.row-hits') || // Добавлено для подтаблиц
+                        node.matches('tr.row-hits') || 
                         node.querySelector('tr.row-hits') ||
                         node.matches('table.bg-gray') ||
                         node.querySelector('table.bg-gray')
