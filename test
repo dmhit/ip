@@ -557,7 +557,7 @@
         toggleInput.type = 'checkbox';
         toggleInput.style.width = '40px';
         toggleInput.style.height = '20px';
-        toggleInput.style.marginRight = '5px';
+        toggleInput.style.marginRight = '1px';
         toggleInput.style.cursor = 'pointer';
 
         const toggleLabel = document.createElement('span');
