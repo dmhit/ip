@@ -561,7 +561,7 @@
         toggleInput.style.cursor = 'pointer';
 
         const toggleLabel = document.createElement('span');
-        toggleLabel.textContent = 'Geo Lookup';
+        toggleLabel.textContent = 'Выкл/Вкл';
         toggleLabel.style.fontSize = '16px';
         toggleLabel.style.color = '#333';
 
@@ -569,8 +569,8 @@
         toggleContainer.appendChild(toggleLabel);
         document.body.appendChild(toggleContainer);
 
-        // Загружаем сохранённое состояние
-        const isEnabled = localStorage.getItem('geoLookupEnabled') !== 'false';
+        // Загружаем сохранённое состояние из sessionStorage
+        const isEnabled = sessionStorage.getItem('geoLookupEnabled') !== 'false';
         toggleInput.checked = isEnabled;
 
         // Инициализация в зависимости от состояния
@@ -587,14 +587,14 @@
         toggleInput.addEventListener('change', () => {
             if (toggleInput.checked) {
                 console.log('Включаем Geo Lookup');
-                localStorage.setItem('geoLookupEnabled', 'true');
+                sessionStorage.setItem('geoLookupEnabled', 'true');
                 initGeoLookup();
                 adjustSubtableColspan();
                 observer.observe(targetNode, { childList: true, subtree: true });
                 console.log('MutationObserver запущен, отслеживаем #tabContentVisits.');
             } else {
                 console.log('Выключаем Geo Lookup');
-                localStorage.setItem('geoLookupEnabled', 'false');
+                sessionStorage.setItem('geoLookupEnabled', 'false');
                 disableGeoFeatures();
             }
         });
