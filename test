@@ -546,8 +546,8 @@
     function createToggle() {
         const toggleContainer = document.createElement('label');
         toggleContainer.style.position = 'fixed';
-        toggleContainer.style.right = '5%';
-        toggleContainer.style.top = '25%';
+        toggleContainer.style.right = '1%';
+        toggleContainer.style.top = '15%';
         toggleContainer.style.zIndex = '1000';
         toggleContainer.style.display = 'flex';
         toggleContainer.style.alignItems = 'center';
@@ -557,7 +557,7 @@
         toggleInput.type = 'checkbox';
         toggleInput.style.width = '40px';
         toggleInput.style.height = '20px';
-        toggleInput.style.marginRight = '10px';
+        toggleInput.style.marginRight = '5px';
         toggleInput.style.cursor = 'pointer';
 
         const toggleLabel = document.createElement('span');
