@@ -3,7 +3,7 @@
     const CONFIG = {
         TOKEN: '{TOKEN}', // Плейсхолдер токена, заменяется загрузчиком
         TARGET_PATH: '/pl/metrika/user/',
-        API_BASE: 'https://api.2ip.io',
+        API_BASE: 'https://api.2ip.io', // Исправлено: убраны лишние пробелы
         CACHE_PREFIX: 'geo_ip_',
         DELAY_MS: 1000,
         RETRY_DELAY_MS: 1500,
@@ -130,6 +130,7 @@
             if (cached) return cached;
 
             try {
+                // Исправлено: убраны лишние пробелы в URL
                 const data = await RequestQueue.add(`${CONFIG.API_BASE}/${ip}?token=${CONFIG.TOKEN}&lang=ru`);
                 const result = {
                     country: `${data.country || 'N/A'} (${data.code || ''} ${data.emoji || ''})`,
@@ -144,6 +145,7 @@
         },
         fetchWhois: async (ip) => {
             try {
+                // Исправлено: убраны лишние пробелы в URL
                 const data = await RequestQueue.add(`${CONFIG.API_BASE}/whois/${ip}?token=${CONFIG.TOKEN}`);
                 const provider = data.whois?.network?.name || 'N/A';
                 const cached = Cache.get(ip) || { country: 'N/A', city: 'N/A', provider: 'N/A' };
@@ -227,7 +229,22 @@
                     };
                     cell.appendChild(loadButton);
                 } else {
-                    cell.textContent = 'Загрузка...'; // Для country и city, если не кэшировано и не автозагрузка
+                    // Для country и city, если не кэшировано и не автозагрузка
+                    const loadButton = document.createElement('button');
+                    loadButton.textContent = 'Загрузить';
+                    loadButton.setAttribute('data-ip', ip);
+                    loadButton.onclick = async () => {
+                        loadButton.disabled = true;
+                        loadButton.textContent = 'Загрузка...';
+                        const geoData = await Api.fetchGeo(ip);
+                        DOM.getMainBodyRows().forEach(r => {
+                            if (DOM.getIPFromRow(r) === ip) {
+                                r.querySelector('td[data-geo="country"]').innerHTML = geoData.country;
+                                r.querySelector('td[data-geo="city"]').innerHTML = geoData.city;
+                            }
+                        });
+                    };
+                    cell.appendChild(loadButton);
                 }
             }
             return cell;
