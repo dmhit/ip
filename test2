@@ -1,239 +1,309 @@
-(function() {
-    // Плейсхолдер токена, заменяется загрузчиком
-    const TOKEN = '{TOKEN}';
+(function () {
+    // --- Конфигурация ---
+    const CONFIG = {
+        TOKEN: '{TOKEN}', // Плейсхолдер токена, заменяется загрузчиком
+        TARGET_PATH: '/pl/metrika/user/',
+        API_BASE: 'https://api.2ip.io',
+        CACHE_PREFIX: 'geo_ip_',
+        DELAY_MS: 1000,
+        RETRY_DELAY_MS: 1500,
+        MAX_RETRIES: 7,
+        AUTO_LOAD_COUNT: 7,
+        TOGGLE_STORAGE_KEY: 'geoLookupEnabled',
+        SUBTABLE_DEFAULT_COLSPAN: 7
+    };
 
-    // Проверяем, соответствует ли текущая страница шаблону
-    if (!window.location.pathname.startsWith('/pl/metrika/user/')) {
+    // --- Валидация ---
+    if (!window.location.pathname.startsWith(CONFIG.TARGET_PATH)) {
         console.log('Не на целевой странице.');
         return;
     }
-
-    // Логируем HTTPS-контекст для отладки
     console.log('Secure context:', window.isSecureContext, 'Protocol:', location.protocol);
 
-    // Функция для проверки валидности IP-адреса
-    function isValidIP(ip) {
-        const ipRegex = /^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/;
-        return ipRegex.test(ip);
-    }
-
-    // Функция для кэширования данных в sessionStorage
-    const cacheKeyPrefix = 'geo_ip_';
-    function getCachedGeo(ip) {
-        const cached = sessionStorage.getItem(cacheKeyPrefix + ip);
-        if (!cached) return null;
-        const data = JSON.parse(cached);
-        console.log(`Используем кэш для IP ${ip}:`, data);
-        return data;
-    }
-    function setCachedGeo(ip, data) {
-        sessionStorage.setItem(cacheKeyPrefix + ip, JSON.stringify(data));
-        console.log(`Сохранены кэшированные данные для IP ${ip}:`, data);
-    }
-
-    // Глобальная очередь запросов
-    const requestQueue = [];
-    let isProcessingQueue = false;
-    const delay = 1000; // Фиксированный интервал 1000 мс
-    const retryDelay = 1500; // 1.5 секунды при 429
-    const maxRetries = 7;
-
-    async function processQueue() {
-        if (isProcessingQueue || requestQueue.length === 0) return;
-        isProcessingQueue = true;
-
-        const { url, resolve, reject, retries, startTime } = requestQueue.shift();
-        try {
-            console.log(`Отправляем запрос: ${url}`);
-            const response = await fetch(url);
-            if (response.status === 429 && retries > 0) {
-                console.log(`429 для ${url}, повтор через ${retryDelay} мс, осталось попыток: ${retries}`);
-                requestQueue.unshift({ url, resolve, reject, retries: retries - 1, startTime });
-                setTimeout(processQueue, retryDelay);
-                isProcessingQueue = false;
-                return;
-            }
-            if (!response.ok) {
-                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-            }
-            const data = await response.json();
-            console.log(`Получены данные для ${url}:`, data);
-            resolve(data);
-        } catch (error) {
-            console.error(`Ошибка для ${url}:`, error);
-            reject(error);
-        } finally {
-            console.log(`Запрос ${url} занял ${Date.now() - startTime} мс, ждём ${delay} мс`);
-            setTimeout(() => {
-                isProcessingQueue = false;
-                processQueue();
-            }, delay);
-        }
-    }
-
-    function queueRequest(url) {
-        return new Promise((resolve, reject) => {
-            requestQueue.push({ url, resolve, reject, retries: maxRetries, startTime: Date.now() });
-            processQueue();
-        });
-    }
-
-    async function fetchGeo(ip) {
-        const cached = getCachedGeo(ip);
-        if (cached) return cached;
-
-        try {
-            const data = await queueRequest(`https://api.2ip.io/${ip}?token=${TOKEN}&lang=ru`);
-            const result = {
-                country: `${data.country || 'N/A'} (${data.code || ''} ${data.emoji || ''})`,
-                city: `${data.city || 'N/A'} (${data.region || ''})`,
-                provider: 'N/A'
-            };
-            setCachedGeo(ip, result);
-            return result;
-        } catch (error) {
-            return { country: 'Ошибка', city: 'Ошибка', provider: 'N/A' };
-        }
-    }
-
-    async function fetchWhois(ip) {
-        try {
-            const data = await queueRequest(`https://api.2ip.io/whois/${ip}?token=${TOKEN}`);
-            const provider = data.whois?.network?.name || 'N/A';
-            const cached = getCachedGeo(ip) || { country: 'N/A', city: 'N/A', provider: 'N/A' };
-            cached.provider = provider;
-            setCachedGeo(ip, cached);
-            return provider;
-        } catch (error) {
-            return 'N/A';
-        }
-    }
-
-    // Функция для отображения временного уведомления
-    function showNotification(message, targetElement) {
-        const notification = document.createElement('div');
-        notification.textContent = message;
-        notification.style.position = 'absolute';
-        notification.style.background = '#333';
-        notification.style.color = '#fff';
-        notification.style.padding = '5px 10px';
-        notification.style.borderRadius = '4px';
-        notification.style.zIndex = '1000';
-        notification.style.fontSize = '12px';
-
-        const rect = targetElement.getBoundingClientRect();
-        notification.style.left = `${rect.left + window.scrollX}px`;
-        notification.style.top = `${rect.bottom + window.scrollY + 5}px`;
-
-        document.body.appendChild(notification);
-        setTimeout(() => {
-            notification.remove();
-        }, 2000);
-    }
-
-    // Функция копирования в буфер обмена
-    function copyToClipboard(text, targetElement) {
-        console.log(`Попытка копирования: ${text}`);
-        try {
-            if (typeof text !== 'string') {
-                throw new Error(`Некорректное значение для копирования: ${text}`);
-            }
-            const textArea = document.createElement('textarea');
-            textArea.value = text;
-            textArea.style.position = 'fixed';
-            textArea.style.opacity = '0';
-            document.body.appendChild(textArea);
-            textArea.select();
+    // --- Вспомогательные функции ---
+    const Utils = {
+        isValidIP: (ip) => {
+            const ipRegex = /^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/;
+            return ipRegex.test(ip);
+        },
+        createNotification: (message, targetElement) => {
+            const notification = document.createElement('div');
+            notification.textContent = message;
+            Object.assign(notification.style, {
+                position: 'absolute',
+                background: '#333',
+                color: '#fff',
+                padding: '5px 10px',
+                borderRadius: '4px',
+                zIndex: '1000',
+                fontSize: '12px',
+                left: `${targetElement.getBoundingClientRect().left + window.scrollX}px`,
+                top: `${targetElement.getBoundingClientRect().bottom + window.scrollY + 5}px`
+            });
+            document.body.appendChild(notification);
+            setTimeout(() => notification.remove(), 2000);
+        },
+        copyToClipboard: (text, targetElement) => {
+            console.log(`Попытка копирования: ${text}`);
             try {
+                if (typeof text !== 'string') throw new Error(`Некорректное значение для копирования: ${text}`);
+                const textArea = document.createElement('textarea');
+                textArea.value = text;
+                textArea.style.cssText = 'position:fixed; opacity:0;';
+                document.body.appendChild(textArea);
+                textArea.select();
                 document.execCommand('copy');
                 console.log(`Скопировано в буфер обмена: ${text}`);
-                showNotification(`Скопировано: ${text}`, targetElement);
+                Utils.createNotification(`Скопировано: ${text}`, targetElement);
             } catch (err) {
                 console.error(`Ошибка копирования для ${text}:`, err);
-                showNotification('Ошибка копирования', targetElement);
+                Utils.createNotification('Ошибка копирования', targetElement);
+            } finally {
+                if (textArea) document.body.removeChild(textArea);
             }
-            document.body.removeChild(textArea);
-        } catch (error) {
-            console.error(`Ошибка копирования для ${text}:`, error);
-            showNotification('Ошибка копирования', targetElement);
         }
-    }
+    };
 
-    // Флаг для предотвращения зацикливания
-    let isProcessingTable = false;
+    // --- Кэширование ---
+    const Cache = {
+        get: (ip) => {
+            const cached = sessionStorage.getItem(CONFIG.CACHE_PREFIX + ip);
+            if (!cached) return null;
+            const data = JSON.parse(cached);
+            console.log(`Используем кэш для IP ${ip}:`, data);
+            return data;
+        },
+        set: (ip, data) => {
+            sessionStorage.setItem(CONFIG.CACHE_PREFIX + ip, JSON.stringify(data));
+            console.log(`Сохранены кэшированные данные для IP ${ip}:`, data);
+        }
+    };
 
-    // Функция для корректировки colspan в подтаблицах
-    function adjustSubtableColspan() {
-        const headerRow = document.querySelector('table.table.table-striped.table-bordered:not(.bg-gray) thead tr');
-        if (!headerRow) return false;
+    // --- Очередь запросов ---
+    const RequestQueue = (() => {
+        const queue = [];
+        let isProcessing = false;
 
-        const totalColumns = headerRow.children.length;
-        const subRows = document.querySelectorAll('tr.row-hits');
-        let adjusted = false;
-        subRows.forEach(subRow => {
-            const subTd = subRow.querySelector('td[colspan]');
-            if (subTd && subTd.getAttribute('colspan') !== totalColumns.toString()) {
-                console.log(`Корректируем colspan для подтаблицы: с ${subTd.getAttribute('colspan')} на ${totalColumns}`);
-                subTd.setAttribute('colspan', totalColumns);
-                adjusted = true;
-            }
-        });
-        return adjusted;
-    }
+        const process = async () => {
+            if (isProcessing || queue.length === 0) return;
+            isProcessing = true;
 
-    // Функция для отключения изменений (удаление столбцов и обработчиков)
-    function disableGeoFeatures() {
-        console.log('Отключаем функциональность Geo Lookup');
-        // Удаляем добавленные столбцы
-        const table = document.querySelector('table.table.table-striped.table-bordered:not(.bg-gray)');
-        if (table) {
-            // Удаляем заголовки
-            const headerRow = table.querySelector('thead tr');
-            if (headerRow) {
-                ['country', 'city', 'provider'].forEach(geoType => {
-                    const th = headerRow.querySelector(`th[data-geo="${geoType}"]`);
-                    if (th) th.remove();
-                });
-            }
-            // Удаляем ячейки и обработчики кликов
-            const rows = table.querySelectorAll('tbody tr:not(.row-hits)');
-            rows.forEach(row => {
-                const ipTd = row.children[2];
-                ['country', 'city', 'provider'].forEach(geoType => {
-                    const td = row.querySelector(`td[data-geo="${geoType}"]`);
-                    if (td) td.remove();
-                });
-                if (ipTd) {
-                    ipTd.style.cursor = '';
-                    ipTd.style.textDecoration = '';
-                    ipTd.style.color = '';
-                    ipTd.title = '';
-                    ipTd.onclick = null;
+            const { url, resolve, reject, retries, startTime } = queue.shift();
+            try {
+                console.log(`Отправляем запрос: ${url}`);
+                const response = await fetch(url);
+                if (response.status === 429 && retries > 0) {
+                    console.log(`429 для ${url}, повтор через ${CONFIG.RETRY_DELAY_MS} мс, осталось попыток: ${retries}`);
+                    queue.unshift({ url, resolve, reject, retries: retries - 1, startTime });
+                    setTimeout(process, CONFIG.RETRY_DELAY_MS);
+                    isProcessing = false;
+                    return;
                 }
-            });
-            // Сбрасываем colspan подтаблиц до исходного значения (7)
-            const subRows = document.querySelectorAll('tr.row-hits');
-            subRows.forEach(subRow => {
+                if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                const data = await response.json();
+                console.log(`Получены данные для ${url}:`, data);
+                resolve(data);
+            } catch (error) {
+                console.error(`Ошибка для ${url}:`, error);
+                reject(error);
+            } finally {
+                console.log(`Запрос ${url} занял ${Date.now() - startTime} мс, ждём ${CONFIG.DELAY_MS} мс`);
+                setTimeout(() => {
+                    isProcessing = false;
+                    process();
+                }, CONFIG.DELAY_MS);
+            }
+        };
+
+        return {
+            add: (url) => new Promise((resolve, reject) => {
+                queue.push({ url, resolve, reject, retries: CONFIG.MAX_RETRIES, startTime: Date.now() });
+                process();
+            })
+        };
+    })();
+
+    // --- API Функции ---
+    const Api = {
+        fetchGeo: async (ip) => {
+            const cached = Cache.get(ip);
+            if (cached) return cached;
+
+            try {
+                const data = await RequestQueue.add(`${CONFIG.API_BASE}/${ip}?token=${CONFIG.TOKEN}&lang=ru`);
+                const result = {
+                    country: `${data.country || 'N/A'} (${data.code || ''} ${data.emoji || ''})`,
+                    city: `${data.city || 'N/A'} (${data.region || ''})`,
+                    provider: 'N/A'
+                };
+                Cache.set(ip, result);
+                return result;
+            } catch (error) {
+                return { country: 'Ошибка', city: 'Ошибка', provider: 'N/A' };
+            }
+        },
+        fetchWhois: async (ip) => {
+            try {
+                const data = await RequestQueue.add(`${CONFIG.API_BASE}/whois/${ip}?token=${CONFIG.TOKEN}`);
+                const provider = data.whois?.network?.name || 'N/A';
+                const cached = Cache.get(ip) || { country: 'N/A', city: 'N/A', provider: 'N/A' };
+                cached.provider = provider;
+                Cache.set(ip, cached);
+                return provider;
+            } catch (error) {
+                return 'N/A';
+            }
+        }
+    };
+
+    // --- Работа с DOM ---
+    const DOM = {
+        selectors: {
+            mainTable: 'table.table.table-striped.table-bordered:not(.bg-gray)',
+            paginationCurrent: '.pagination .active a[data-page]',
+            mainTableRows: 'tbody tr:not(.row-hits)',
+            subTableRows: 'tr.row-hits',
+            geoTh: 'th[data-geo]',
+            geoTd: 'td[data-geo]'
+        },
+        getMainTable: () => document.querySelector(DOM.selectors.mainTable),
+        getMainHeaderRow: () => document.querySelector(`${DOM.selectors.mainTable} thead tr`),
+        getMainBodyRows: () => Array.from(document.querySelectorAll(DOM.selectors.mainTableRows)),
+        getSubTableRows: () => document.querySelectorAll(DOM.selectors.subTableRows),
+        getIPCell: (row) => row.children[2],
+        getIPFromRow: (row) => {
+            const ipTd = DOM.getIPCell(row);
+            return ipTd ? ipTd.textContent.trim() : null;
+        },
+        getGeoCells: (row) => ({
+            country: row.querySelector('td[data-geo="country"]'),
+            city: row.querySelector('td[data-geo="city"]'),
+            provider: row.querySelector('td[data-geo="provider"]')
+        }),
+        addGeoHeaders: (headerRow, ipTh) => {
+            if (!headerRow.querySelector('th[data-geo="country"]')) {
+                console.log('Добавляем заголовки: Страна, Город, Провайдер');
+                const countryTh = document.createElement('th');
+                countryTh.textContent = 'Страна';
+                countryTh.setAttribute('data-geo', 'country');
+                ipTh.after(countryTh);
+
+                const cityTh = document.createElement('th');
+                cityTh.textContent = 'Город';
+                cityTh.setAttribute('data-geo', 'city');
+                countryTh.after(cityTh);
+
+                const providerTh = document.createElement('th');
+                providerTh.textContent = 'Провайдер';
+                providerTh.setAttribute('data-geo', 'provider');
+                cityTh.after(providerTh);
+            }
+        },
+        createGeoCell: (geoType, ip, cachedData) => {
+            const cell = document.createElement('td');
+            cell.setAttribute('data-geo', geoType);
+
+            if (cachedData) {
+                if (geoType === 'provider' && cachedData.provider !== 'N/A') {
+                    cell.innerHTML = cachedData.provider;
+                } else {
+                    cell.innerHTML = cachedData[geoType];
+                }
+            } else {
+                if (geoType === 'provider' || (geoType !== 'country' && geoType !== 'city')) { // Для provider всегда кнопка
+                    const loadButton = document.createElement('button');
+                    loadButton.textContent = 'Загрузить';
+                    loadButton.setAttribute('data-ip', ip);
+                    loadButton.onclick = async () => {
+                        loadButton.disabled = true;
+                        loadButton.textContent = 'Загрузка...';
+                        const updatedProvider = await Api.fetchWhois(ip);
+                        // Обновление через DOM, как в оригинале
+                        DOM.getMainBodyRows().forEach(r => {
+                            if (DOM.getIPFromRow(r) === ip) {
+                                r.querySelector('td[data-geo="provider"]').innerHTML = updatedProvider;
+                            }
+                        });
+                    };
+                    cell.appendChild(loadButton);
+                } else {
+                    cell.textContent = 'Загрузка...'; // Для country и city, если не кэшировано и не автозагрузка
+                }
+            }
+            return cell;
+        },
+        addIPCellStyling: (ipTd, ip) => {
+            ipTd.style.cursor = 'pointer';
+            ipTd.style.textDecoration = 'underline';
+            ipTd.style.color = 'blue';
+            ipTd.title = 'Кликните, чтобы скопировать &dev-request-ip=' + ip;
+            ipTd.onclick = () => Utils.copyToClipboard(`&dev-request-ip=${ip}`, ipTd);
+        },
+        adjustSubtableColspan: () => {
+            const headerRow = DOM.getMainHeaderRow();
+            if (!headerRow) return false;
+            const totalColumns = headerRow.children.length;
+            let adjusted = false;
+            DOM.getSubTableRows().forEach(subRow => {
                 const subTd = subRow.querySelector('td[colspan]');
-                if (subTd && subTd.getAttribute('colspan') !== '7') {
-                    console.log(`Сбрасываем colspan для подтаблицы: с ${subTd.getAttribute('colspan')} на 7`);
-                    subTd.setAttribute('colspan', '7');
+                if (subTd && subTd.getAttribute('colspan') !== totalColumns.toString()) {
+                    console.log(`Корректируем colspan для подтаблицы: с ${subTd.getAttribute('colspan')} на ${totalColumns}`);
+                    subTd.setAttribute('colspan', totalColumns);
+                    adjusted = true;
                 }
             });
+            return adjusted;
+        },
+        disableGeoFeatures: (observer) => {
+            console.log('Отключаем функциональность Geo Lookup');
+            const table = DOM.getMainTable();
+            if (table) {
+                // Удаляем заголовки
+                const headerRow = table.querySelector('thead tr');
+                if (headerRow) {
+                    ['country', 'city', 'provider'].forEach(geoType => {
+                        const th = headerRow.querySelector(`th[data-geo="${geoType}"]`);
+                        if (th) th.remove();
+                    });
+                }
+                // Удаляем ячейки и обработчики кликов
+                DOM.getMainBodyRows().forEach(row => {
+                    const ipTd = DOM.getIPCell(row);
+                    ['country', 'city', 'provider'].forEach(geoType => {
+                        const td = row.querySelector(`td[data-geo="${geoType}"]`);
+                        if (td) td.remove();
+                    });
+                    if (ipTd) {
+                        ipTd.style.cursor = '';
+                        ipTd.style.textDecoration = '';
+                        ipTd.style.color = '';
+                        ipTd.title = '';
+                        ipTd.onclick = null;
+                    }
+                });
+                // Сбрасываем colspan подтаблиц
+                DOM.getSubTableRows().forEach(subRow => {
+                    const subTd = subRow.querySelector('td[colspan]');
+                    if (subTd && subTd.getAttribute('colspan') !== CONFIG.SUBTABLE_DEFAULT_COLSPAN.toString()) {
+                        console.log(`Сбрасываем colspan для подтаблицы: с ${subTd.getAttribute('colspan')} на ${CONFIG.SUBTABLE_DEFAULT_COLSPAN}`);
+                        subTd.setAttribute('colspan', CONFIG.SUBTABLE_DEFAULT_COLSPAN);
+                    }
+                });
+            }
+            observer.disconnect();
+            console.log('MutationObserver отключён.');
         }
-        // Отключаем MutationObserver
-        observer.disconnect();
-        console.log('MutationObserver отключён.');
-    }
+    };
 
-    // Функция, которая запускает логику, когда таблица найдена
-    function initGeoLookup() {
+    // --- Логика инициализации ---
+    let isProcessingTable = false;
+    const initGeoLookup = () => {
         if (isProcessingTable) {
             console.log('Таблица уже обрабатывается, пропускаем.');
             return false;
         }
 
-        const table = document.querySelector('table.table.table-striped.table-bordered:not(.bg-gray)');
+        const table = DOM.getMainTable();
         if (!table) {
             console.log('Главная таблица ещё не найдена, ждём...');
             return false;
@@ -250,7 +320,6 @@
             return true;
         }
 
-        // Добавляем новые th элементы после столбца IP (индекс 2), если их ещё нет
         const headerRow = thead.querySelector('tr');
         const ipTh = headerRow.children[2];
         if (!ipTh) {
@@ -259,57 +328,27 @@
             return true;
         }
 
-        if (!headerRow.querySelector('th[data-geo="country"]')) {
-            console.log('Добавляем заголовки: Страна, Город, Провайдер');
-            const countryTh = document.createElement('th');
-            countryTh.textContent = 'Страна';
-            countryTh.setAttribute('data-geo', 'country');
-            ipTh.after(countryTh);
+        DOM.addGeoHeaders(headerRow, ipTh);
 
-            const cityTh = document.createElement('th');
-            cityTh.textContent = 'Город';
-            cityTh.setAttribute('data-geo', 'city');
-            countryTh.after(cityTh);
-
-            const providerTh = document.createElement('th');
-            providerTh.textContent = 'Провайдер';
-            providerTh.setAttribute('data-geo', 'provider');
-            cityTh.after(providerTh);
-        }
-
-        // Собираем уникальные IP-адреса только из строк главной таблицы
-        const rows = Array.from(tbody.querySelectorAll('tr:not(.row-hits)'));
+        const rows = DOM.getMainBodyRows();
         const uniqueIPs = new Set();
         rows.forEach(row => {
-            const ipTd = row.children[2];
-            if (ipTd) {
-                const ip = ipTd.textContent.trim();
-                if (ip && isValidIP(ip)) {
-                    uniqueIPs.add(ip);
-                }
-            }
+            const ip = DOM.getIPFromRow(row);
+            if (ip && Utils.isValidIP(ip)) uniqueIPs.add(ip);
         });
 
-        // Определяем текущую страницу
-        const pageElement = document.querySelector('.pagination .active a[data-page]');
+        const pageElement = document.querySelector(DOM.selectors.paginationCurrent);
         const currentPage = pageElement ? (parseInt(pageElement.getAttribute('data-page')) + 1).toString() : '1';
-        const autoLoadIPs = currentPage === '1' ? Array.from(uniqueIPs).slice(0, 7) : [];
+        const autoLoadIPs = currentPage === '1' ? Array.from(uniqueIPs).slice(0, CONFIG.AUTO_LOAD_COUNT) : [];
 
-        // Логируем только если есть IP для автозагрузки
         if (autoLoadIPs.length > 0) {
             console.log(`Найдено ${uniqueIPs.size} уникальных IP, страница ${currentPage}, автоматически загружаем ${autoLoadIPs.length}:`, autoLoadIPs);
         }
 
-        // Добавляем ячейки только для строк, где их ещё нет
-        const addedIPs = new Set();
         rows.forEach(row => {
-            const ipTd = row.children[2];
-            const ip = ipTd?.textContent.trim();
-            const countryTd = row.querySelector('td[data-geo="country"]');
-            const cityTd = row.querySelector('td[data-geo="city"]');
-            const providerTd = row.querySelector('td[data-geo="provider"]');
+            const ip = DOM.getIPFromRow(row);
+            const { country: countryTd, city: cityTd, provider: providerTd } = DOM.getGeoCells(row);
 
-            // Пропускаем, если ячейки уже заполнены и не в состоянии "Загрузка..."
             if (countryTd && cityTd && providerTd &&
                 countryTd.innerHTML && cityTd.innerHTML && providerTd.innerHTML &&
                 countryTd.innerHTML !== 'Загрузка...' && cityTd.innerHTML !== 'Загрузка...') {
@@ -317,168 +356,128 @@
                 return;
             }
 
-            if (!countryTd) {
-                if (ip && isValidIP(ip) && !addedIPs.has(ip)) {
-                    console.log(`Добавляем ячейки для IP ${ip}`);
-                    addedIPs.add(ip);
-                }
-                if (ip && isValidIP(ip)) {
-                    ipTd.style.cursor = 'pointer';
-                    ipTd.style.textDecoration = 'underline';
-                    ipTd.style.color = 'blue';
-                    ipTd.title = 'Кликните, чтобы скопировать &dev-request-ip=' + ip;
-                    ipTd.onclick = () => copyToClipboard(`&dev-request-ip=${ip}`, ipTd);
-                }
-                const newCountryTd = document.createElement('td');
-                newCountryTd.setAttribute('data-geo', 'country');
-                const newCityTd = document.createElement('td');
-                newCityTd.setAttribute('data-geo', 'city');
-                const newProviderTd = document.createElement('td');
-                newProviderTd.setAttribute('data-geo', 'provider');
+            if (!countryTd) { // Если ячейка страны не существует, значит и остальные не существуют
+                const cached = ip && Utils.isValidIP(ip) ? Cache.get(ip) : null;
 
-                const cached = ip && isValidIP(ip) ? getCachedGeo(ip) : null;
-                if (cached) {
-                    newCountryTd.innerHTML = cached.country;
-                    newCityTd.innerHTML = cached.city;
-                    if (cached.provider !== 'N/A') {
-                        newProviderTd.innerHTML = cached.provider;
-                    } else {
-                        const loadProviderButton = document.createElement('button');
-                        loadProviderButton.textContent = 'Загрузить';
-                        loadProviderButton.setAttribute('data-ip', ip);
-                        loadProviderButton.onclick = async () => {
-                            loadProviderButton.disabled = true;
-                            loadProviderButton.textContent = 'Загрузка...';
-                            const ip = loadProviderButton.getAttribute('data-ip');
-                            const provider = await fetchWhois(ip);
-                            rows.forEach(r => {
-                                if (r.children[2].textContent.trim() === ip) {
-                                    r.querySelector('td[data-geo="provider"]').innerHTML = provider;
-                                }
-                            });
-                        };
-                        newProviderTd.appendChild(loadProviderButton);
-                    }
-                } else {
-                    if (ip && isValidIP(ip) && autoLoadIPs.includes(ip)) {
-                        newCountryTd.textContent = 'Загрузка...';
-                        newCityTd.textContent = 'Загрузка...';
-                    } else if (ip && isValidIP(ip)) {
-                        const loadGeoButton = document.createElement('button');
-                        loadGeoButton.textContent = 'Загрузить';
-                        loadGeoButton.setAttribute('data-ip', ip);
-                        loadGeoButton.onclick = async () => {
-                            loadGeoButton.disabled = true;
-                            loadGeoButton.textContent = 'Загрузка...';
-                            const ip = loadGeoButton.getAttribute('data-ip');
-                            const geoData = await fetchGeo(ip);
-                            rows.forEach(r => {
-                                if (r.children[2].textContent.trim() === ip) {
-                                    r.querySelector('td[data-geo="country"]').innerHTML = geoData.country;
-                                    r.querySelector('td[data-geo="city"]').innerHTML = geoData.city;
-                                }
-                            });
-                        };
-                        newCountryTd.appendChild(loadGeoButton);
-                        newCityTd.textContent = 'Загрузка...';
-                    }
-                    if (ip && isValidIP(ip)) {
-                        const loadProviderButton = document.createElement('button');
-                        loadProviderButton.textContent = 'Загрузить';
-                        loadProviderButton.setAttribute('data-ip', ip);
-                        loadProviderButton.onclick = async () => {
-                            loadProviderButton.disabled = true;
-                            loadProviderButton.textContent = 'Загрузка...';
-                            const ip = loadProviderButton.getAttribute('data-ip');
-                            const provider = await fetchWhois(ip);
-                            rows.forEach(r => {
-                                if (r.children[2].textContent.trim() === ip) {
-                                    r.querySelector('td[data-geo="provider"]').innerHTML = provider;
-                                }
-                            });
-                        };
-                        newProviderTd.appendChild(loadProviderButton);
-                    }
+                if (ip && Utils.isValidIP(ip)) {
+                    DOM.addIPCellStyling(DOM.getIPCell(row), ip);
                 }
 
-                if (ip && isValidIP(ip)) {
-                    ipTd.after(newCountryTd);
-                    newCountryTd.after(newCityTd);
-                    newCityTd.after(newProviderTd);
+                const newCountryTd = DOM.createGeoCell('country', ip, cached && (autoLoadIPs.includes(ip) ? null : cached));
+                const newCityTd = DOM.createGeoCell('city', ip, cached && (autoLoadIPs.includes(ip) ? null : cached));
+                const newProviderTd = DOM.createGeoCell('provider', ip, cached);
+
+                if (ip && Utils.isValidIP(ip)) {
+                    DOM.getIPCell(row).after(newCountryTd, newCityTd, newProviderTd);
                 }
             }
         });
 
-        // Автоматическая загрузка первых 7 IP (только на первой странице)
-        async function processIP(ip) {
+        // Автоматическая загрузка
+        const processIP = async (ip) => {
             console.log(`Начинаем обработку IP ${ip}`);
-            const geoData = await fetchGeo(ip);
+            const geoData = await Api.fetchGeo(ip);
             rows.forEach(row => {
-                const ipTd = row.children[2];
+                const ipTd = DOM.getIPCell(row);
                 if (ipTd && ipTd.textContent.trim() === ip) {
-                    const countryTd = row.querySelector('td[data-geo="country"]');
-                    const cityTd = row.querySelector('td[data-geo="city"]');
-                    if (countryTd.innerHTML && cityTd.innerHTML &&
+                    const { country: countryTd, city: cityTd } = DOM.getGeoCells(row);
+                    if (countryTd.innerHTML && cityTd.innerHTML && 
                         countryTd.innerHTML !== 'Загрузка...' && cityTd.innerHTML !== 'Загрузка...') {
                         console.log(`Пропускаем обновление для IP ${ip}: данные уже есть`);
                         return;
                     }
                     console.log(`Обновляем строку для IP ${ip}:`, geoData);
-                    if (countryTd) {
-                        countryTd.innerHTML = geoData.country;
-                        console.log(`Установлено country для IP ${ip}: ${countryTd.innerHTML}`);
-                    }
-                    if (cityTd) {
-                        cityTd.innerHTML = geoData.city;
-                        console.log(`Установлено city для IP ${ip}: ${cityTd.innerHTML}`);
-                    }
+                    if (countryTd) countryTd.innerHTML = geoData.country;
+                    if (cityTd) cityTd.innerHTML = geoData.city;
                 }
             });
-        }
+        };
 
         if (autoLoadIPs.length > 0) {
             let index = 0;
-            function processNext() {
+            const processNext = () => {
                 if (index >= autoLoadIPs.length) {
                     console.log('Автоматическая обработка первых 7 IP завершена.');
                     isProcessingTable = false;
-                    adjustSubtableColspan();
+                    DOM.adjustSubtableColspan();
                     return;
                 }
-
                 const ip = autoLoadIPs[index];
                 console.log(`Запускаем processIP для ${ip}`);
                 processIP(ip).then(() => {
+                    console.log(`Обработан IP ${ip}, переходим к следующему (${index + 1}/${autoLoadIPs.length})`);
                     index++;
-                    console.log(`Обработан IP ${ip}, переходим к следующему (${index}/${autoLoadIPs.length})`);
                     processNext();
                 }).catch(error => {
                     console.error(`Ошибка в processNext для IP ${ip}:`, error);
                     rows.forEach(row => {
-                        const ipTd = row.children[2];
+                        const ipTd = DOM.getIPCell(row);
                         if (ipTd && ipTd.textContent.trim() === ip) {
-                            row.querySelector('td[data-geo="country"]').innerHTML = 'Ошибка';
-                            row.querySelector('td[data-geo="city"]').innerHTML = 'Ошибка';
-                            console.log(`Установлено ошибка для IP ${ip}`);
+                            DOM.getGeoCells(row).country.innerHTML = 'Ошибка';
+                            DOM.getGeoCells(row).city.innerHTML = 'Ошибка';
+                            console.log(`Установлена ошибка для IP ${ip}`);
                         }
                     });
                     index++;
-                    console.log(`Ошибка для IP ${ip}, переходим к следующему (${index}/${autoLoadIPs.length})`);
                     processNext();
                 });
-            }
-
+            };
             console.log('Запускаем автоматическую загрузку первых 7 IP');
             processNext();
         } else {
             isProcessingTable = false;
-            adjustSubtableColspan();
+            DOM.adjustSubtableColspan();
         }
-
         return true;
-    }
+    };
 
-    // Создаём MutationObserver
+    // --- Тумблер ---
+    const createToggle = (observer) => {
+        const toggleContainer = document.createElement('label');
+        Object.assign(toggleContainer.style, {
+            position: 'fixed',
+            right: '1%',
+            top: '15%',
+            zIndex: '1000',
+            display: 'flex',
+            alignItems: 'center',
+            cursor: 'pointer'
+        });
+
+        const toggleInput = document.createElement('input');
+        toggleInput.type = 'checkbox';
+        toggleInput.style.cssText = 'width: 20px; height: 20px; margin-right: 1px; cursor: pointer;';
+
+        const toggleLabel = document.createElement('span');
+        toggleLabel.textContent = 'Выкл/Вкл';
+        toggleLabel.style.cssText = 'font-size: 16px; color: #333;';
+
+        toggleContainer.appendChild(toggleInput);
+        toggleContainer.appendChild(toggleLabel);
+        document.body.appendChild(toggleContainer);
+
+        const isEnabled = sessionStorage.getItem(CONFIG.TOGGLE_STORAGE_KEY) !== 'false';
+        toggleInput.checked = isEnabled;
+
+        const updateState = (enable) => {
+            sessionStorage.setItem(CONFIG.TOGGLE_STORAGE_KEY, enable.toString());
+            if (enable) {
+                console.log('Включаем Geo Lookup');
+                initGeoLookup();
+                DOM.adjustSubtableColspan();
+                observer.observe(targetNode, { childList: true, subtree: true });
+            } else {
+                console.log('Выключаем Geo Lookup');
+                DOM.disableGeoFeatures(observer);
+            }
+        };
+
+        updateState(isEnabled);
+
+        toggleInput.addEventListener('change', (e) => updateState(e.target.checked));
+    };
+
+    // --- Observer ---
     const targetNode = document.querySelector('#tabContentVisits') || document.body;
     const observer = new MutationObserver((mutations) => {
         if (isProcessingTable) {
@@ -491,46 +490,35 @@
 
         for (const mutation of mutations) {
             if (mutation.addedNodes.length || mutation.removedNodes.length) {
-                // Проверяем изменения, связанные с заменой главной таблицы или её содержимого
                 const mainTableChanged = Array.from(mutation.addedNodes).some(node =>
                     node.nodeType === 1 && (
-                        // Новая главная таблица или её фрагмент
-                        node.matches('table.table.table-striped.table-bordered:not(.bg-gray)') ||
-                        node.querySelector('table.table.table-striped.table-bordered:not(.bg-gray)') ||
-                        // Замена tbody с непустыми строками
-                        (node.matches('tbody') && node.closest('table.table.table-striped.table-bordered:not(.bg-gray)') &&
-                         Array.from(node.querySelectorAll('tr:not(.row-hits)')).some(tr => tr.querySelector('td'))) ||
-                        // Добавление непустых строк (с ячейками <td>) в главной таблице
-                        (node.matches('tr:not(.row-hits)') && node.closest('table.table.table-striped.table-bordered:not(.bg-gray)') &&
-                         node.querySelector('td'))
+                        node.matches(DOM.selectors.mainTable) ||
+                        node.querySelector(DOM.selectors.mainTable) ||
+                        (node.matches('tbody') && node.closest(DOM.selectors.mainTable) &&
+                         Array.from(node.querySelectorAll(DOM.selectors.mainTableRows)).some(tr => tr.querySelector('td'))) ||
+                        (node.matches(DOM.selectors.mainTableRows) && node.closest(DOM.selectors.mainTable) && node.querySelector('td'))
                     )
                 ) || Array.from(mutation.removedNodes).some(node =>
                     node.nodeType === 1 && (
-                        node.matches('table.table.table-striped.table-bordered:not(.bg-gray)') ||
-                        node.querySelector('table.table.table-striped.table-bordered:not(.bg-gray)') ||
-                        (node.matches('tbody') && node.closest('table.table.table-striped.table-bordered:not(.bg-gray)') &&
-                         Array.from(node.querySelectorAll('tr:not(.row-hits)')).some(tr => tr.querySelector('td'))) ||
-                        (node.matches('tr:not(.row-hits)') && node.closest('table.table.table-striped.table-bordered:not(.bg-gray)') &&
-                         node.querySelector('td'))
+                        node.matches(DOM.selectors.mainTable) ||
+                        node.querySelector(DOM.selectors.mainTable) ||
+                        (node.matches('tbody') && node.closest(DOM.selectors.mainTable) &&
+                         Array.from(node.querySelectorAll(DOM.selectors.mainTableRows)).some(tr => tr.querySelector('td'))) ||
+                        (node.matches(DOM.selectors.mainTableRows) && node.closest(DOM.selectors.mainTable) && node.querySelector('td'))
                     )
                 );
 
-                // Проверяем добавление подтаблиц
                 const subTableChanged = Array.from(mutation.addedNodes).some(node =>
                     node.nodeType === 1 && (
-                        node.matches('tr.row-hits') ||
-                        node.querySelector('tr.row-hits') ||
+                        node.matches(DOM.selectors.subTableRows) ||
+                        node.querySelector(DOM.selectors.subTableRows) ||
                         node.matches('table.bg-gray') ||
                         node.querySelector('table.bg-gray')
                     )
                 );
 
-                if (mainTableChanged) {
-                    tableChanged = true;
-                }
-                if (subTableChanged) {
-                    subtableAdded = true;
-                }
+                if (mainTableChanged) tableChanged = true;
+                if (subTableChanged) subtableAdded = true;
             }
         }
 
@@ -538,19 +526,10 @@
             console.log('Обнаружено изменение в главной таблице, запускаем initGeoLookup.');
             initGeoLookup();
         } else if (subtableAdded) {
-            adjustSubtableColspan();
+            DOM.adjustSubtableColspan();
         }
     });
 
-    observer.observe(targetNode, {
-        childList: true,
-        subtree: true
-    });
-
-    console.log('MutationObserver запущен, отслеживаем #tabContentVisits.');
-
-    // Запускаем сразу, если таблица уже есть
-    initGeoLookup();
-    adjustSubtableColspan();
-
+    // --- Инициализация ---
+    createToggle(observer);
 })();
