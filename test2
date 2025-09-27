@@ -1,31 +1,29 @@
 (function () {
-  "use strict";
+  "use strict"; // Включаем строгий режим для лучшей безопасности и производительности
 
   // --- КОНФИГУРАЦИЯ ---
+  // Плейсхолдер токена, заменяется загрузчиком
   const CONFIG = {
-    TOKEN: '{TOKEN}', // Плейсхолдер, заменяется загрузчиком
+    TOKEN: '{TOKEN}', // Будет заменён загрузчиком
     API_BASE_URL: 'https://api.2ip.io',
-    TARGET_PATH_REGEX: /^\/pl\/metrika\/user\//,
-    AUTO_LOAD_COUNT: 7,
-    REQUEST_DELAY_MS: 1000,
-    RETRY_DELAY_MS: 1500,
-    MAX_RETRIES: 7,
+    TARGET_PATH_REGEX: /^\/pl\/metrika\/user\//, // Регулярное выражение для проверки URL
+    AUTO_LOAD_COUNT: 7, // Количество IP для автоматической загрузки на первой странице
+    REQUEST_DELAY_MS: 1000, // Задержка между запросами (мс)
+    RETRY_DELAY_MS: 1500, // Задержка перед повтором при 429 (мс)
+    MAX_RETRIES: 7, // Максимальное количество попыток для запроса
     CACHE_KEY_PREFIX: 'geo_ip_',
-    ORIGINAL_TABLE_COLS: 7, // Исходное количество столбцов в таблице (для сброса colspan)
     TABLE_SELECTOR: 'table.table.table-striped.table-bordered:not(.bg-gray)',
     SUBTABLE_ROW_CLASS: 'row-hits',
     PAGINATION_SELECTOR: '.pagination .active a[data-page]',
     TAB_CONTENT_ID: '#tabContentVisits',
-    TOGGLE_STORAGE_KEY: 'geoLookupEnabled', // Ключ для хранения состояния тумблера
-    TOGGLE_POSITION: { right: '1%', top: '15%' } // Позиция тумблера
   };
 
   // --- ПРОВЕРКА СТРАНИЦЫ ---
   if (!CONFIG.TARGET_PATH_REGEX.test(window.location.pathname)) {
-    console.log('GeoIP Enhanced: Не на целевой странице, завершение.');
+    console.log('GeoIP Lookup: Не на целевой странице, завершение.');
     return;
   }
-  console.log('GeoIP Enhanced: Запуск на целевой странице.');
+  console.log('GeoIP Lookup: Запуск на целевой странице.');
 
   // --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
   const Helpers = {
@@ -54,10 +52,10 @@
     },
 
     copyToClipboard: function (text, targetElement) {
-      console.log(`GeoIP Enhanced: Попытка копирования: ${text}`);
+      console.log(`GeoIP Lookup: Попытка копирования: ${text}`);
       try {
         if (typeof text !== 'string') {
-          throw new Error(`GeoIP Enhanced: Некорректное значение для копирования: ${text}`);
+          throw new Error(`GeoIP Lookup: Некорректное значение для копирования: ${text}`);
         }
         const textArea = document.createElement('textarea');
         textArea.value = text;
@@ -65,11 +63,11 @@
         document.body.appendChild(textArea);
         textArea.select();
         document.execCommand('copy');
-        console.log(`GeoIP Enhanced: Скопировано: ${text}`);
+        console.log(`GeoIP Lookup: Скопировано: ${text}`);
         Helpers.showNotification(`Скопировано: ${text}`, targetElement);
         document.body.removeChild(textArea);
       } catch (err) {
-        console.error('GeoIP Enhanced: Ошибка копирования:', err);
+        console.error('GeoIP Lookup: Ошибка копирования:', err);
         Helpers.showNotification('Ошибка копирования', targetElement);
       }
     },
@@ -82,7 +80,7 @@
       const cached = sessionStorage.getItem(key);
       if (cached) {
         const data = JSON.parse(cached);
-        console.log(`GeoIP Enhanced: Используем кэш для IP ${ip}:`, data);
+        console.log(`GeoIP Lookup: Используем кэш для IP ${ip}:`, data);
         return data;
       }
       return null;
@@ -90,7 +88,7 @@
     set: function (ip, data) {
       const key = CONFIG.CACHE_KEY_PREFIX + ip;
       sessionStorage.setItem(key, JSON.stringify(data));
-      console.log(`GeoIP Enhanced: Сохранены кэшированные данные для IP ${ip}:`, data);
+      console.log(`GeoIP Lookup: Сохранены кэшированные данные для IP ${ip}:`, data);
     },
   };
 
@@ -105,10 +103,10 @@
 
       const { url, resolve, reject, retries, startTime } = queue.shift();
       try {
-        console.log(`GeoIP Enhanced: Отправляем запрос: ${url}`);
+        console.log(`GeoIP Lookup: Отправляем запрос: ${url}`);
         const response = await fetch(url);
         if (response.status === 429 && retries > 0) {
-          console.log(`GeoIP Enhanced: 429 для ${url}, повтор через ${CONFIG.RETRY_DELAY_MS} мс, осталось: ${retries}`);
+          console.log(`GeoIP Lookup: 429 для ${url}, повтор через ${CONFIG.RETRY_DELAY_MS} мс, осталось: ${retries}`);
           queue.unshift({ url, resolve, reject, retries: retries - 1, startTime });
           setTimeout(processQueue, CONFIG.RETRY_DELAY_MS);
           processing = false;
@@ -116,13 +114,13 @@
         }
         if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         const data = await response.json();
-        console.log(`GeoIP Enhanced: Получены данные для ${url}:`, data);
+        console.log(`GeoIP Lookup: Получены данные для ${url}:`, data);
         resolve(data);
       } catch (error) {
-        console.error(`GeoIP Enhanced: Ошибка для ${url}:`, error);
+        console.error(`GeoIP Lookup: Ошибка для ${url}:`, error);
         reject(error);
       } finally {
-        console.log(`GeoIP Enhanced: Запрос ${url} занял ${Date.now() - startTime} мс, ждём ${CONFIG.REQUEST_DELAY_MS} мс`);
+        console.log(`GeoIP Lookup: Запрос ${url} занял ${Date.now() - startTime} мс, ждём ${CONFIG.REQUEST_DELAY_MS} мс`);
         setTimeout(() => {
           processing = false;
           processQueue();
@@ -162,7 +160,7 @@
         Cache.set(ip, result);
         return result;
       } catch (error) {
-        console.error(`GeoIP Enhanced: Ошибка получения гео для IP ${ip}:`, error);
+        console.error(`GeoIP Lookup: Ошибка получения гео для IP ${ip}:`, error);
         return { country: 'Ошибка', city: 'Ошибка', provider: 'N/A' };
       }
     },
@@ -176,83 +174,11 @@
         Cache.set(ip, cached); // Обновляем кэш с провайдером
         return provider;
       } catch (error) {
-        console.error(`GeoIP Enhanced: Ошибка получения WHOIS для IP ${ip}:`, error);
+        console.error(`GeoIP Lookup: Ошибка получения WHOIS для IP ${ip}:`, error);
         return 'N/A';
       }
     }
   };
-
-  // --- УПРАВЛЕНИЕ ФУНКЦИОНАЛЬНОСТЬЮ (ВКЛ/ВЫКЛ) ---
-  const FeatureToggle = (function() {
-    let isEnabled = sessionStorage.getItem(CONFIG.TOGGLE_STORAGE_KEY) !== 'false';
-    let observer = null; // Ссылка на observer будет здесь
-
-    function createToggle() {
-        const toggleContainer = document.createElement('label');
-        toggleContainer.style.position = 'fixed';
-        toggleContainer.style.right = CONFIG.TOGGLE_POSITION.right;
-        toggleContainer.style.top = CONFIG.TOGGLE_POSITION.top;
-        toggleContainer.style.zIndex = '1000';
-        toggleContainer.style.display = 'flex';
-        toggleContainer.style.alignItems = 'center';
-        toggleContainer.style.cursor = 'pointer';
-
-        const toggleInput = document.createElement('input');
-        toggleInput.type = 'checkbox';
-        toggleInput.style.width = '20px';
-        toggleInput.style.height = '20px';
-        toggleInput.style.marginRight = '1px';
-        toggleInput.style.cursor = 'pointer';
-        toggleInput.checked = isEnabled; // Устанавливаем состояние из sessionStorage
-
-        const toggleLabel = document.createElement('span');
-        toggleLabel.textContent = 'GeoIP: Выкл/Вкл';
-        toggleLabel.style.fontSize = '16px';
-        toggleLabel.style.color = '#333';
-
-        toggleContainer.appendChild(toggleInput);
-        toggleContainer.appendChild(toggleLabel);
-        document.body.appendChild(toggleContainer);
-
-        toggleInput.addEventListener('change', function() {
-            isEnabled = this.checked;
-            sessionStorage.setItem(CONFIG.TOGGLE_STORAGE_KEY, isEnabled);
-            console.log(`GeoIP Enhanced: Функция включена: ${isEnabled}`);
-            if (isEnabled) {
-                enableFeatures();
-            } else {
-                disableFeatures();
-            }
-        });
-
-        console.log('GeoIP Enhanced: Тумблер создан.');
-    }
-
-    function enableFeatures() {
-        console.log('GeoIP Enhanced: Включаю функциональность.');
-        TableManager.initGeoLookup();
-        TableManager.adjustSubtableColspan();
-        if (observer) {
-            observer.observe(document.querySelector(CONFIG.TAB_CONTENT_ID) || document.body, { childList: true, subtree: true });
-            console.log('GeoIP Enhanced: MutationObserver запущен.');
-        }
-    }
-
-    function disableFeatures() {
-        console.log('GeoIP Enhanced: Отключаю функциональность.');
-        TableManager.removeGeoColumnsAndHandlers();
-        if (observer) {
-            observer.disconnect();
-            console.log('GeoIP Enhanced: MutationObserver отключён.');
-        }
-    }
-
-    function isFeatureEnabled() {
-        return isEnabled;
-    }
-
-    return { createToggle, enableFeatures, disableFeatures, isFeatureEnabled };
-  })();
 
   // --- РАБОТА С ТАБЛИЦЕЙ ---
   const TableManager = (function () {
@@ -269,7 +195,7 @@
         subRows.forEach(subRow => {
             const subTd = subRow.querySelector('td[colspan]');
             if (subTd && subTd.getAttribute('colspan') !== totalColumns.toString()) {
-                console.log(`GeoIP Enhanced: Корректирую colspan подтаблицы: ${subTd.getAttribute('colspan')} -> ${totalColumns}`);
+                console.log(`GeoIP Lookup: Корректируем colspan подтаблицы: ${subTd.getAttribute('colspan')} -> ${totalColumns}`);
                 subTd.setAttribute('colspan', totalColumns);
                 adjusted = true;
             }
@@ -277,48 +203,9 @@
         return adjusted;
     }
 
-    function removeGeoColumnsAndHandlers() {
-        console.log('GeoIP Enhanced: Удаляю добавленные столбцы и обработчики.');
-        const table = document.querySelector(CONFIG.TABLE_SELECTOR);
-        if (!table) return;
-
-        const headerRow = table.querySelector('thead tr');
-        if (headerRow) {
-            ['country', 'city', 'provider'].forEach(geoType => {
-                const th = headerRow.querySelector(`th[data-geo="${geoType}"]`);
-                if (th) th.remove();
-            });
-        }
-
-        const rows = table.querySelectorAll('tbody tr:not(.' + CONFIG.SUBTABLE_ROW_CLASS + ')');
-        rows.forEach(row => {
-            ['country', 'city', 'provider'].forEach(geoType => {
-                const td = row.querySelector(`td[data-geo="${geoType}"]`);
-                if (td) td.remove();
-            });
-            const ipTd = row.children[2];
-            if (ipTd) {
-                ipTd.style.cursor = '';
-                ipTd.style.textDecoration = '';
-                ipTd.style.color = '';
-                ipTd.title = '';
-                ipTd.onclick = null;
-            }
-        });
-
-        const subRows = document.querySelectorAll(`tr.${CONFIG.SUBTABLE_ROW_CLASS}`);
-        subRows.forEach(subRow => {
-            const subTd = subRow.querySelector('td[colspan]');
-            if (subTd && subTd.getAttribute('colspan') !== CONFIG.ORIGINAL_TABLE_COLS.toString()) {
-                console.log(`GeoIP Enhanced: Сбрасываю colspan подтаблицы: ${subTd.getAttribute('colspan')} -> ${CONFIG.ORIGINAL_TABLE_COLS}`);
-                subTd.setAttribute('colspan', CONFIG.ORIGINAL_TABLE_COLS);
-            }
-        });
-    }
-
 
     async function processIP(ip, rows) {
-      console.log(`GeoIP Enhanced: Начинаю обработку IP ${ip}`);
+      console.log(`GeoIP Lookup: Начинаем обработку IP ${ip}`);
       const geoData = await API.fetchGeo(ip);
       rows.forEach(row => {
         const ipTd = row.children[2];
@@ -328,10 +215,10 @@
           // Пропускаем, если данные уже установлены
           if (countryTd && cityTd && countryTd.innerHTML && cityTd.innerHTML &&
               countryTd.innerHTML !== 'Загрузка...' && cityTd.innerHTML !== 'Загрузка...') {
-            console.log(`GeoIP Enhanced: Пропускаю обновление для IP ${ip}, данные уже есть.`);
+            console.log(`GeoIP Lookup: Пропускаем обновление для IP ${ip}, данные уже есть.`);
             return;
           }
-          console.log(`GeoIP Enhanced: Обновляю строку для IP ${ip}:`, geoData);
+          console.log(`GeoIP Lookup: Обновляем строку для IP ${ip}:`, geoData);
           if (countryTd) countryTd.innerHTML = geoData.country;
           if (cityTd) cityTd.innerHTML = geoData.city;
         }
@@ -340,23 +227,23 @@
 
     function initGeoLookup() {
       if (isProcessing) {
-        console.log('GeoIP Enhanced: Таблица уже обрабатывается.');
+        console.log('GeoIP Lookup: Таблица уже обрабатывается.');
         return false;
       }
 
       const table = document.querySelector(CONFIG.TABLE_SELECTOR);
       if (!table) {
-        console.log('GeoIP Enhanced: Главная таблица не найдена.');
+        console.log('GeoIP Lookup: Главная таблица не найдена.');
         return false;
       }
 
       isProcessing = true;
-      console.log('GeoIP Enhanced: Обнаружена таблица, начинаю обработку.');
+      console.log('GeoIP Lookup: Обнаружена таблица, начинаю обработку.');
 
       const thead = table.querySelector('thead');
       const tbody = table.querySelector('tbody');
       if (!thead || !tbody) {
-        console.error('GeoIP Enhanced: Не найдены thead или tbody.');
+        console.error('GeoIP Lookup: Не найдены thead или tbody.');
         isProcessing = false;
         return true;
       }
@@ -365,13 +252,13 @@
       const headerRow = thead.querySelector('tr');
       const ipTh = headerRow.children[2];
       if (!ipTh) {
-        console.error('GeoIP Enhanced: Не найден заголовок IP.');
+        console.error('GeoIP Lookup: Не найден заголовок IP.');
         isProcessing = false;
         return true;
       }
 
       if (!headerRow.querySelector('th[data-geo="country"]')) {
-        console.log('GeoIP Enhanced: Добавляю столбцы: Страна, Город, Провайдер.');
+        console.log('GeoIP Lookup: Добавляю столбцы: Страна, Город, Провайдер.');
         const countryTh = document.createElement('th');
         countryTh.textContent = 'Страна';
         countryTh.setAttribute('data-geo', 'country');
@@ -406,7 +293,7 @@
       const currentPage = pageElement ? (parseInt(pageElement.getAttribute('data-page')) + 1).toString() : '1';
       const autoLoadIPs = currentPage === '1' ? Array.from(uniqueIPs).slice(0, CONFIG.AUTO_LOAD_COUNT) : [];
       if (autoLoadIPs.length > 0) {
-        console.log(`GeoIP Enhanced: Найдено ${uniqueIPs.size} IP, страница ${currentPage}. Автозагрузка ${autoLoadIPs.length}:`, autoLoadIPs);
+        console.log(`GeoIP Lookup: Найдено ${uniqueIPs.size} IP, страница ${currentPage}. Автозагрузка ${autoLoadIPs.length}:`, autoLoadIPs);
       }
 
       // Добавляем ячейки в строки
@@ -422,17 +309,18 @@
         if (countryTd && cityTd && providerTd &&
             countryTd.innerHTML && cityTd.innerHTML && providerTd.innerHTML &&
             countryTd.innerHTML !== 'Загрузка...' && cityTd.innerHTML !== 'Загрузка...') {
-          console.log(`GeoIP Enhanced: Пропускаю строку для IP ${ip}, данные уже есть.`);
+          console.log(`GeoIP Lookup: Пропускаю строку для IP ${ip}, данные уже есть.`);
           return;
         }
 
         if (!countryTd) { // Добавляем ячейки, если их нет
           if (ip && Helpers.isValidIP(ip) && !addedIPs.has(ip)) {
-            console.log(`GeoIP Enhanced: Добавляю ячейки для IP ${ip}`);
+            console.log(`GeoIP Lookup: Добавляю ячейки для IP ${ip}`);
             addedIPs.add(ip);
           }
 
           if (ip && Helpers.isValidIP(ip)) {
+            // Стиль для IP
             ipTd.style.cursor = 'pointer';
             ipTd.style.textDecoration = 'underline';
             ipTd.style.color = 'blue';
@@ -449,11 +337,13 @@
 
           const cached = ip && Helpers.isValidIP(ip) ? Cache.get(ip) : null;
           if (cached) {
+            // Заполняем из кэша
             newCountryTd.innerHTML = cached.country;
             newCityTd.innerHTML = cached.city;
             if (cached.provider !== 'N/A') {
               newProviderTd.innerHTML = cached.provider;
             } else {
+              // Кнопка для загрузки провайдера, если кэш есть, но провайдер нет
               const loadProviderButton = document.createElement('button');
               loadProviderButton.textContent = 'Загрузить';
               loadProviderButton.setAttribute('data-ip', ip);
@@ -471,6 +361,7 @@
               newProviderTd.appendChild(loadProviderButton);
             }
           } else {
+            // Устанавливаем состояние "Загрузка..." или кнопки
             if (ip && Helpers.isValidIP(ip) && autoLoadIPs.includes(ip)) {
               newCountryTd.textContent = 'Загрузка...';
               newCityTd.textContent = 'Загрузка...';
@@ -523,20 +414,21 @@
         let index = 0;
         function processNext() {
           if (index >= autoLoadIPs.length) {
-            console.log('GeoIP Enhanced: Автоматическая загрузка завершена.');
+            console.log('GeoIP Lookup: Автоматическая загрузка завершена.');
             isProcessing = false;
-            adjustSubtableColspan();
+            adjustSubtableColspan(); // Обновляем colspan подтаблиц после загрузки
             return;
           }
           const ip = autoLoadIPs[index];
           processIP(ip, rows)
             .then(() => {
                 index++;
-                console.log(`GeoIP Enhanced: Обработан IP ${ip}, осталось: ${autoLoadIPs.length - index}`);
+                console.log(`GeoIP Lookup: Обработан IP ${ip}, осталось: ${autoLoadIPs.length - index}`);
                 processNext();
             })
             .catch(error => {
-                console.error(`GeoIP Enhanced: Ошибка при обработке IP ${ip}:`, error);
+                console.error(`GeoIP Lookup: Ошибка при обработке IP ${ip}:`, error);
+                // Устанавливаем ошибку в UI
                 rows.forEach(row => {
                   const ipTd = row.children[2];
                   if (ipTd && ipTd.textContent.trim() === ip) {
@@ -547,32 +439,34 @@
                   }
                 });
                 index++;
-                processNext();
+                processNext(); // Продолжаем с следующим IP
             });
         }
         processNext();
       } else {
         isProcessing = false;
-        adjustSubtableColspan();
+        adjustSubtableColspan(); // Обновляем colspan подтаблиц сразу, если автозагрузка не нужна
       }
 
       return true;
     }
 
-    return { initGeoLookup, adjustSubtableColspan, removeGeoColumnsAndHandlers };
+    return { initGeoLookup, adjustSubtableColspan };
   })();
 
-  // --- ИНИЦИАЛИЗАЦИЯ ---
-  // Создаём тумблер
-  FeatureToggle.createToggle();
+  // --- ИНИЦИАЛИЗАЦИЯ И НАБЛЮДЕНИЕ ---
+  // Запускаем сразу, если таблица уже есть
+  TableManager.initGeoLookup();
+  TableManager.adjustSubtableColspan(); // Используем функцию из TableManager
 
-  // Настраиваем MutationObserver (ссылка будет передана в FeatureToggle)
+  // Настраиваем MutationObserver для отслеживания изменений
   const targetNode = document.querySelector(CONFIG.TAB_CONTENT_ID) || document.body;
   const observer = new MutationObserver((mutationsList) => {
     if (TableManager.isProcessing) { // Используем флаг из TableManager, если он доступен
+        // Или можно использовать глобальный флаг, если нужен доступ извне
         let isProcessingTable = false; // Локальный флаг для observer
         if (isProcessingTable) {
-            console.log('GeoIP Enhanced: Таблица обрабатывается, пропускаю изменения.');
+            console.log('GeoIP Lookup: Таблица обрабатывается, пропускаю изменения.');
             return;
         }
     }
@@ -584,13 +478,15 @@
       if (mutation.type === 'childList') {
         const addedOrRemoved = [...mutation.addedNodes, ...mutation.removedNodes];
         for (const node of addedOrRemoved) {
-          if (node.nodeType === 1) {
+          if (node.nodeType === 1) { // Проверяем, что это элемент
+            // Проверка изменения основной таблицы
             if (node.matches(CONFIG.TABLE_SELECTOR) ||
                 node.querySelector(CONFIG.TABLE_SELECTOR) ||
                 (node.matches('tbody') && node.closest(CONFIG.TABLE_SELECTOR) && node.querySelector('tr:not(.' + CONFIG.SUBTABLE_ROW_CLASS + ')')) ||
                 (node.matches('tr:not(.' + CONFIG.SUBTABLE_ROW_CLASS + ')') && node.closest(CONFIG.TABLE_SELECTOR) && node.querySelector('td'))) {
               tableChanged = true;
             }
+            // Проверка добавления подтаблиц
             if (node.matches(`tr.${CONFIG.SUBTABLE_ROW_CLASS}`) ||
                 node.querySelector(`tr.${CONFIG.SUBTABLE_ROW_CLASS}`) ||
                 node.matches('table.bg-gray') ||
@@ -603,33 +499,14 @@
     }
 
     if (tableChanged) {
-      console.log('GeoIP Enhanced: Обнаружено изменение в основной таблице.');
-      if (FeatureToggle.isFeatureEnabled()) {
-          console.log('GeoIP Enhanced: Функция включена, запускаю initGeoLookup.');
-          TableManager.initGeoLookup();
-      } else {
-          console.log('GeoIP Enhanced: Функция выключена, игнорирую изменения.');
-      }
+      console.log('GeoIP Lookup: Обнаружено изменение в основной таблице, перезапускаю initGeoLookup.');
+      TableManager.initGeoLookup();
     } else if (subtableAdded) {
-      console.log('GeoIP Enhanced: Обнаружено добавление подтаблицы.');
-      if (FeatureToggle.isFeatureEnabled()) {
-          console.log('GeoIP Enhanced: Функция включена, корректирую colspan.');
-          TableManager.adjustSubtableColspan();
-      } else {
-          console.log('GeoIP Enhanced: Функция выключена, игнорирую изменение colspan.');
-      }
+      console.log('GeoIP Lookup: Обнаружено добавление подтаблицы, корректирую colspan.');
+      TableManager.adjustSubtableColspan();
     }
   });
 
-  // Передаём observer в FeatureToggle
-  FeatureToggle.observer = observer;
-
-  // Инициализируем функциональность в зависимости от сохранённого состояния
-  if (FeatureToggle.isFeatureEnabled()) {
-    FeatureToggle.enableFeatures();
-  } else {
-    FeatureToggle.disableFeatures();
-  }
-
-  console.log('GeoIP Enhanced: Инициализация завершена.');
+  observer.observe(targetNode, { childList: true, subtree: true });
+  console.log('GeoIP Lookup: MutationObserver запущен.');
 })();
