@@ -201,18 +201,19 @@
                 cityTh.after(providerTh);
             }
         },
-        createGeoCell: (geoType, ip, cachedData) => {
+        // Исправлено: логика отображения содержимого ячеек теперь соответствует оригиналу
+        createGeoCell: (geoType, ip, cachedData, isAutoLoadIP) => {
             const cell = document.createElement('td');
             cell.setAttribute('data-geo', geoType);
 
             if (cachedData) {
+                // Если есть кэш
                 if (geoType === 'provider' && cachedData.provider !== 'N/A') {
                     cell.innerHTML = cachedData.provider;
-                } else {
+                } else if (geoType === 'country' || geoType === 'city') {
                     cell.innerHTML = cachedData[geoType];
-                }
-            } else {
-                if (geoType === 'provider' || (geoType !== 'country' && geoType !== 'city')) { // Для provider всегда кнопка
+                } else {
+                    // Для provider, если кэш есть, но provider = N/A
                     const loadButton = document.createElement('button');
                     loadButton.textContent = 'Загрузить';
                     loadButton.setAttribute('data-ip', ip);
@@ -228,19 +229,44 @@
                         });
                     };
                     cell.appendChild(loadButton);
-                } else {
-                    // Для country и city, если не кэшировано и не автозагрузка
+                }
+            } else {
+                // Если кэша нет
+                if (geoType === 'country' || geoType === 'city') {
+                    if (isAutoLoadIP) {
+                        // Для автозагрузки показываем "Загрузка..."
+                        cell.textContent = 'Загрузка...';
+                    } else {
+                        // Для остальных показываем кнопку "Загрузить"
+                        const loadButton = document.createElement('button');
+                        loadButton.textContent = 'Загрузить';
+                        loadButton.setAttribute('data-ip', ip);
+                        loadButton.onclick = async () => {
+                            loadButton.disabled = true;
+                            loadButton.textContent = 'Загрузка...';
+                            const geoData = await Api.fetchGeo(ip);
+                            DOM.getMainBodyRows().forEach(r => {
+                                if (DOM.getIPFromRow(r) === ip) {
+                                    r.querySelector('td[data-geo="country"]').innerHTML = geoData.country;
+                                    r.querySelector('td[data-geo="city"]').innerHTML = geoData.city;
+                                }
+                            });
+                        };
+                        cell.appendChild(loadButton);
+                    }
+                } else { // geoType === 'provider'
+                    // Для provider всегда кнопка, если кэша нет или provider N/A
                     const loadButton = document.createElement('button');
                     loadButton.textContent = 'Загрузить';
                     loadButton.setAttribute('data-ip', ip);
                     loadButton.onclick = async () => {
                         loadButton.disabled = true;
                         loadButton.textContent = 'Загрузка...';
-                        const geoData = await Api.fetchGeo(ip);
+                        const updatedProvider = await Api.fetchWhois(ip);
+                        // Обновление через DOM, как в оригинале
                         DOM.getMainBodyRows().forEach(r => {
                             if (DOM.getIPFromRow(r) === ip) {
-                                r.querySelector('td[data-geo="country"]').innerHTML = geoData.country;
-                                r.querySelector('td[data-geo="city"]').innerHTML = geoData.city;
+                                r.querySelector('td[data-geo="provider"]').innerHTML = updatedProvider;
                             }
                         });
                     };
@@ -375,14 +401,16 @@
 
             if (!countryTd) { // Если ячейка страны не существует, значит и остальные не существуют
                 const cached = ip && Utils.isValidIP(ip) ? Cache.get(ip) : null;
+                const isAutoLoad = autoLoadIPs.includes(ip);
 
                 if (ip && Utils.isValidIP(ip)) {
                     DOM.addIPCellStyling(DOM.getIPCell(row), ip);
                 }
 
-                const newCountryTd = DOM.createGeoCell('country', ip, cached && (autoLoadIPs.includes(ip) ? null : cached));
-                const newCityTd = DOM.createGeoCell('city', ip, cached && (autoLoadIPs.includes(ip) ? null : cached));
-                const newProviderTd = DOM.createGeoCell('provider', ip, cached);
+                // Исправлено: передаём isAutoLoad в createGeoCell
+                const newCountryTd = DOM.createGeoCell('country', ip, cached, isAutoLoad);
+                const newCityTd = DOM.createGeoCell('city', ip, cached, isAutoLoad);
+                const newProviderTd = DOM.createGeoCell('provider', ip, cached, false); // Для provider автозагрузка не нужна
 
                 if (ip && Utils.isValidIP(ip)) {
                     DOM.getIPCell(row).after(newCountryTd, newCityTd, newProviderTd);
