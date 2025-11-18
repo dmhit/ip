@@ -152,19 +152,27 @@
 
     // Функции обновления
     function updateGeo(ip, geoData, rows) {
+        let updatedCount = 0;
         rows.forEach(row => {
             const rowIp = row.getAttribute('data-ip');
             if (rowIp === ip) {
                 const countryTd = row.querySelector('td[data-geo="country"]');
                 const cityTd = row.querySelector('td[data-geo="city"]');
-                if (countryTd) countryTd.innerHTML = geoData.country;
-                if (cityTd) cityTd.innerHTML = geoData.city;
-                console.log(`Обновлено geo для IP ${ip}`);
+                if (countryTd) {
+                    countryTd.innerHTML = geoData.country;
+                    updatedCount++;
+                }
+                if (cityTd) {
+                    cityTd.innerHTML = geoData.city;
+                    updatedCount++;
+                }
             }
         });
+        console.log(`Обновлено geo для IP ${ip} в ${updatedCount} строках`);
     }
 
     function updateBlack(ip, blackData, rows) {
+        let updatedCount = 0;
         rows.forEach(row => {
             const rowIp = row.getAttribute('data-ip');
             if (rowIp === ip) {
@@ -172,21 +180,26 @@
                 const container = ipTd ? ipTd.querySelector('.blacklist-container') : null;
                 if (container) {
                     container.innerHTML = blackData.blacklist;
-                    console.log(`Обновлён blacklist для IP ${ip}`);
+                    updatedCount++;
                 }
             }
         });
+        console.log(`Обновлён blacklist для IP ${ip} в ${updatedCount} строках`);
     }
 
     function updateProvider(ip, provider, rows) {
+        let updatedCount = 0;
         rows.forEach(row => {
             const rowIp = row.getAttribute('data-ip');
             if (rowIp === ip) {
                 const provTd = row.querySelector('td[data-geo="provider"]');
-                if (provTd) provTd.innerHTML = provider;
-                console.log(`Обновлён provider для IP ${ip}`);
+                if (provTd) {
+                    provTd.innerHTML = provider;
+                    updatedCount++;
+                }
             }
         });
+        console.log(`Обновлён provider для IP ${ip} в ${updatedCount} строках`);
     }
 
     // Функция для отображения временного уведомления
@@ -404,9 +417,9 @@
                 if (ip && isValidIP(ip) && !addedIPs.has(ip)) {
                     console.log(`Добавляем ячейки для IP ${ip}`);
                     addedIPs.add(ip);
-                    row.setAttribute('data-ip', ip);
                 }
                 if (ip && isValidIP(ip)) {
+                    row.setAttribute('data-ip', ip);  // Устанавливаем data-ip на каждую строку с валидным IP
                     ipTd.style.cursor = 'pointer';
                     ipTd.style.textDecoration = 'underline';
                     ipTd.style.color = 'blue';
@@ -519,6 +532,9 @@
             console.log(`Начинаем processItem для IP ${ip}`);
             const geoData = await fetchGeo(ip);
             updateGeo(ip, geoData, rows);
+            if (geoData.provider !== 'N/A') {
+                updateProvider(ip, geoData.provider, rows);  // Обновляем провайдера из кэша geo, если доступен
+            }
             const blackData = await fetchBlacklist(ip);
             updateBlack(ip, blackData, rows);
         }
