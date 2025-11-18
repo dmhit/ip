@@ -153,7 +153,7 @@
     // Функции обновления
     function updateGeo(ip, geoData, rows) {
         rows.forEach(row => {
-            const rowIp = extractIP(row.children[2].textContent);
+            const rowIp = row.getAttribute('data-ip');
             if (rowIp === ip) {
                 const countryTd = row.querySelector('td[data-geo="country"]');
                 const cityTd = row.querySelector('td[data-geo="city"]');
@@ -166,10 +166,10 @@
 
     function updateBlack(ip, blackData, rows) {
         rows.forEach(row => {
-            const rowIp = extractIP(row.children[2].textContent);
+            const rowIp = row.getAttribute('data-ip');
             if (rowIp === ip) {
                 const ipTd = row.children[2];
-                const container = ipTd.querySelector('.blacklist-container');
+                const container = ipTd ? ipTd.querySelector('.blacklist-container') : null;
                 if (container) {
                     container.innerHTML = blackData.blacklist;
                     console.log(`Обновлён blacklist для IP ${ip}`);
@@ -180,7 +180,7 @@
 
     function updateProvider(ip, provider, rows) {
         rows.forEach(row => {
-            const rowIp = extractIP(row.children[2].textContent);
+            const rowIp = row.getAttribute('data-ip');
             if (rowIp === ip) {
                 const provTd = row.querySelector('td[data-geo="provider"]');
                 if (provTd) provTd.innerHTML = provider;
@@ -404,6 +404,7 @@
                 if (ip && isValidIP(ip) && !addedIPs.has(ip)) {
                     console.log(`Добавляем ячейки для IP ${ip}`);
                     addedIPs.add(ip);
+                    row.setAttribute('data-ip', ip);
                 }
                 if (ip && isValidIP(ip)) {
                     ipTd.style.cursor = 'pointer';
