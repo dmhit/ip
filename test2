@@ -49,55 +49,95 @@
         console.log(`Сохранены кэшированные данные blacklist для IP ${ip}:`, data);
     }
 
-    // Глобальная очередь запросов
-    const requestQueue = [];
-    let isProcessingQueue = false;
-    const delay = 1000; // Фиксированный интервал 1000 мс
+    // Очередь для Geo запросов (2ip.io)
+    const geoRequestQueue = [];
+    let isProcessingGeoQueue = false;
+    const geoDelay = 1000; // Фиксированный интервал 1000 мс
     const retryDelay = 1500; // 1.5 секунды при 429
     const maxRetries = 7;
 
-    async function processQueue() {
-        if (isProcessingQueue || requestQueue.length === 0) return;
-        isProcessingQueue = true;
+    async function processGeoQueue() {
+        if (isProcessingGeoQueue || geoRequestQueue.length === 0) return;
+        isProcessingGeoQueue = true;
 
-        const { url, format, resolve, reject, retries, startTime } = requestQueue.shift();
+        const { url, format, resolve, reject, retries, startTime } = geoRequestQueue.shift();
         try {
-            console.log(`Отправляем запрос: ${url}`);
+            console.log(`Отправляем Geo запрос: ${url}`);
             const response = await fetch(url);
             if (response.status === 429 && retries > 0) {
-                console.log(`429 для ${url}, повтор через ${retryDelay} мс, осталось попыток: ${retries}`);
-                requestQueue.unshift({ url, format, resolve, reject, retries: retries - 1, startTime });
-                setTimeout(processQueue, retryDelay);
-                isProcessingQueue = false;
+                console.log(`429 для Geo ${url}, повтор через ${retryDelay} мс, осталось попыток: ${retries}`);
+                geoRequestQueue.unshift({ url, format, resolve, reject, retries: retries - 1, startTime });
+                setTimeout(processGeoQueue, retryDelay);
+                isProcessingGeoQueue = false;
                 return;
             }
             if (!response.ok) {
                 throw new Error(`HTTP ${response.status}: ${response.statusText}`);
             }
-            let data;
-            if (format === 'text') {
-                data = await response.text();
-            } else {
-                data = await response.json();
-            }
-            console.log(`Получены данные для ${url}:`, data);
+            const data = await response.json();
+            console.log(`Получены Geo данные для ${url}:`, data);
             resolve(data);
         } catch (error) {
-            console.error(`Ошибка для ${url}:`, error);
+            console.error(`Ошибка Geo для ${url}:`, error);
             reject(error);
         } finally {
-            console.log(`Запрос ${url} занял ${Date.now() - startTime} мс, ждём ${delay} мс`);
+            console.log(`Geo запрос ${url} занял ${Date.now() - startTime} мс, ждём ${geoDelay} мс`);
             setTimeout(() => {
-                isProcessingQueue = false;
-                processQueue();
-            }, delay);
+                isProcessingGeoQueue = false;
+                processGeoQueue();
+            }, geoDelay);
         }
     }
 
-    function queueRequest(url, format = 'json') {
+    function queueGeoRequest(url, format = 'json') {
         return new Promise((resolve, reject) => {
-            requestQueue.push({ url, format, resolve, reject, retries: maxRetries, startTime: Date.now() });
-            processQueue();
+            geoRequestQueue.push({ url, format, resolve, reject, retries: maxRetries, startTime: Date.now() });
+            processGeoQueue();
+        });
+    }
+
+    // Очередь для Blacklist запросов
+    const blackRequestQueue = [];
+    let isProcessingBlackQueue = false;
+    const blackDelay = 1000; // Фиксированный интервал 1000 мс
+
+    async function processBlackQueue() {
+        if (isProcessingBlackQueue || blackRequestQueue.length === 0) return;
+        isProcessingBlackQueue = true;
+
+        const { url, resolve, reject, retries, startTime } = blackRequestQueue.shift();
+        try {
+            console.log(`Отправляем Blacklist запрос: ${url}`);
+            const response = await fetch(url);
+            if (response.status === 429 && retries > 0) {
+                console.log(`429 для Blacklist ${url}, повтор через ${retryDelay} мс, осталось попыток: ${retries}`);
+                blackRequestQueue.unshift({ url, resolve, reject, retries: retries - 1, startTime });
+                setTimeout(processBlackQueue, retryDelay);
+                isProcessingBlackQueue = false;
+                return;
+            }
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+            const text = await response.text();
+            console.log(`Получены Blacklist данные для ${url}:`, text);
+            resolve(text);
+        } catch (error) {
+            console.error(`Ошибка Blacklist для ${url}:`, error);
+            reject(error);
+        } finally {
+            console.log(`Blacklist запрос ${url} занял ${Date.now() - startTime} мс, ждём ${blackDelay} мс`);
+            setTimeout(() => {
+                isProcessingBlackQueue = false;
+                processBlackQueue();
+            }, blackDelay);
+        }
+    }
+
+    function queueBlackRequest(url) {
+        return new Promise((resolve, reject) => {
+            blackRequestQueue.push({ url, resolve, reject, retries: maxRetries, startTime: Date.now() });
+            processBlackQueue();
         });
     }
 
@@ -106,7 +146,7 @@
         if (cached) return cached;
 
         try {
-            const data = await queueRequest(`https://api.2ip.io/${ip}?token=${TOKEN}&lang=ru`, 'json');
+            const data = await queueGeoRequest(`https://api.2ip.io/${ip}?token=${TOKEN}&lang=ru`);
             const result = {
                 country: `${data.country || 'N/A'} (${data.code || ''} ${data.emoji || ''})`,
                 city: `${data.city || 'N/A'} (${data.region || ''})`,
@@ -121,7 +161,7 @@
 
     async function fetchWhois(ip) {
         try {
-            const data = await queueRequest(`https://api.2ip.io/whois/${ip}?token=${TOKEN}`, 'json');
+            const data = await queueGeoRequest(`https://api.2ip.io/whois/${ip}?token=${TOKEN}`);
             const provider = data.whois?.network?.name || 'N/A';
             const cached = getCachedGeo(ip) || { country: 'N/A', city: 'N/A', provider: 'N/A' };
             cached.provider = provider;
@@ -138,7 +178,7 @@
 
         try {
             const url = `${location.origin}/pl/gc/tools/check-blacklist-qrator?ip=${ip}`;
-            const text = await queueRequest(url, 'text');
+            const text = await queueBlackRequest(url);
             const lines = text.split('\n').map(l => l.trim()).filter(l => l);
             const results = lines.map(line => line.split(':')[0].trim()).filter(Boolean).join('<br>');
             const result = { blacklist: results || 'N/A' };
@@ -530,12 +570,13 @@
         // Автоматическая загрузка первых 7 IP (только на первой странице)
         async function processItem(ip, rows) {
             console.log(`Начинаем processItem для IP ${ip}`);
-            const geoData = await fetchGeo(ip);
+            const geoPromise = fetchGeo(ip);
+            const blackPromise = fetchBlacklist(ip);
+            const [geoData, blackData] = await Promise.all([geoPromise, blackPromise]);
             updateGeo(ip, geoData, rows);
             if (geoData.provider !== 'N/A') {
                 updateProvider(ip, geoData.provider, rows);  // Обновляем провайдера из кэша geo, если доступен
             }
-            const blackData = await fetchBlacklist(ip);
             updateBlack(ip, blackData, rows);
         }
 
