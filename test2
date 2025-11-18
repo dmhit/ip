@@ -242,6 +242,19 @@
         console.log(`Обновлён provider для IP ${ip} в ${updatedCount} строках`);
     }
 
+    // Функция для установки loading состояния для всех контейнеров blacklist по IP
+    function setBlackLoading(ip, rows) {
+        rows.forEach(row => {
+            if (row.getAttribute('data-ip') === ip) {
+                const ipTd = row.children[2];
+                const container = ipTd ? ipTd.querySelector('.blacklist-container') : null;
+                if (container) {
+                    container.innerHTML = 'Загрузка...';
+                }
+            }
+        });
+    }
+
     // Функция для отображения временного уведомления
     function showNotification(message, targetElement) {
         const notification = document.createElement('div');
@@ -483,12 +496,14 @@
                         const loadProviderButton = document.createElement('button');
                         loadProviderButton.textContent = 'Загрузить';
                         loadProviderButton.setAttribute('data-ip', ip);
-                        loadProviderButton.onclick = async () => {
+                        loadProviderButton.onclick = (e) => {
+                            e.stopPropagation();
                             loadProviderButton.disabled = true;
                             loadProviderButton.textContent = 'Загрузка...';
                             const ipFromBtn = loadProviderButton.getAttribute('data-ip');
-                            const provider = await fetchWhois(ipFromBtn);
-                            updateProvider(ipFromBtn, provider, rows);
+                            fetchWhois(ipFromBtn).then(provider => {
+                                updateProvider(ipFromBtn, provider, rows);
+                            });
                         };
                         newProviderTd.appendChild(loadProviderButton);
                     }
@@ -500,12 +515,14 @@
                         const loadGeoButton = document.createElement('button');
                         loadGeoButton.textContent = 'Загрузить';
                         loadGeoButton.setAttribute('data-ip', ip);
-                        loadGeoButton.onclick = async () => {
+                        loadGeoButton.onclick = (e) => {
+                            e.stopPropagation();
                             loadGeoButton.disabled = true;
                             loadGeoButton.textContent = 'Загрузка...';
                             const ipFromBtn = loadGeoButton.getAttribute('data-ip');
-                            const geoData = await fetchGeo(ipFromBtn);
-                            updateGeo(ipFromBtn, geoData, rows);
+                            fetchGeo(ipFromBtn).then(geoData => {
+                                updateGeo(ipFromBtn, geoData, rows);
+                            });
                         };
                         newCountryTd.appendChild(loadGeoButton);
                         newCityTd.textContent = 'Загрузка...';
@@ -514,12 +531,14 @@
                         const loadProviderButton = document.createElement('button');
                         loadProviderButton.textContent = 'Загрузить';
                         loadProviderButton.setAttribute('data-ip', ip);
-                        loadProviderButton.onclick = async () => {
+                        loadProviderButton.onclick = (e) => {
+                            e.stopPropagation();
                             loadProviderButton.disabled = true;
                             loadProviderButton.textContent = 'Загрузка...';
                             const ipFromBtn = loadProviderButton.getAttribute('data-ip');
-                            const provider = await fetchWhois(ipFromBtn);
-                            updateProvider(ipFromBtn, provider, rows);
+                            fetchWhois(ipFromBtn).then(provider => {
+                                updateProvider(ipFromBtn, provider, rows);
+                            });
                         };
                         newProviderTd.appendChild(loadProviderButton);
                     }
@@ -550,15 +569,16 @@
                             container.innerHTML = 'Загрузка BL...';
                         } else {
                             const loadBlackBtn = document.createElement('button');
-                            loadBlackBtn.textContent = 'BL';
+                            loadBlackBtn.textContent = 'Загрузить';
                             loadBlackBtn.style.fontSize = '0.8em';
                             loadBlackBtn.setAttribute('data-ip', ip);
-                            loadBlackBtn.onclick = async () => {
-                                loadBlackBtn.disabled = true;
-                                loadBlackBtn.textContent = 'Загрузка...';
+                            loadBlackBtn.onclick = (e) => {
+                                e.stopPropagation();
                                 const ipFromBtn = loadBlackBtn.getAttribute('data-ip');
-                                const blackData = await fetchBlacklist(ipFromBtn);
-                                updateBlack(ipFromBtn, blackData, rows);
+                                setBlackLoading(ipFromBtn, rows);
+                                fetchBlacklist(ipFromBtn).then(blackData => {
+                                    updateBlack(ipFromBtn, blackData, rows);
+                                });
                             };
                             container.appendChild(loadBlackBtn);
                         }
