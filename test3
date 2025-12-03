@@ -1,81 +1,130 @@
-(function () {
+(function() {
     // Плейсхолдер токена, заменяется загрузчиком
     const TOKEN = '{TOKEN}';
-
-    // Проверка страницы
+    // Проверяем, соответствует ли текущая страница шаблону
     if (!window.location.pathname.startsWith('/pl/metrika/user/')) {
-        console.log('Не на целевой странице.');
+        console.log('Не  на целевой странице.');
         return;
     }
+    // Логируем HTTPS-контекст для отладки
+    console.log('Secure context:', window.isSecureContext, 'Protocol:', location.protocol);
 
-    console.log('Geo+Blacklist Enhancer запущен');
-
-    // Вспомогательные функции
+    // Функция для проверки валидности IP-адреса
     function isValidIP(ip) {
         const ipRegex = /^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/;
         return ipRegex.test(ip);
     }
-
+    // Функция для извлечения чистого IP из textContent
     function extractIP(text) {
         return text.replace(/\s*\n.*$/, '').trim();
     }
 
-    // Кэширование
-    const geoCachePrefix = 'geo_ip_';
-    const blackCachePrefix = 'black_ip_';
-
-    function getCachedGeo(ip) { const c = sessionStorage.getItem(geoCachePrefix + ip); return c ? JSON.parse(c) : null; }
-    function setCachedGeo(ip, data) { sessionStorage.setItem(geoCachePrefix + ip, JSON.stringify(data)); }
-    function getCachedBlack(ip) { const c = sessionStorage.getItem(blackCachePrefix + ip); return c ? JSON.parse(c) : null; }
-    function setCachedBlack(ip, data) { sessionStorage.setItem(blackCachePrefix + ip, JSON.stringify(data)); }
-
-    // Очереди запросов
-    const geoQueue = [], blackQueue = [];
-    let geoProcessing = false, blackProcessing = false;
-    const DELAY = 1000;
-    const RETRY_DELAY = 1500;
-    const MAX_RETRIES = 7;
-
-    function processQueue(queue, flagName, type) {
-        if (window[flagName] || queue.length === 0) return;
-        window[flagName] = true;
-        const { url, resolve, reject, retries, startTime } = queue.shift();
-
-        fetch(url)
-            .then(async r => {
-                if (r.status === 429 && retries > 0) {
-                    console.log(`429 → повтор через ${RETRY_DELAY}мс`);
-                    setTimeout(() => {
-                        queue.unshift({ url, resolve, reject, retries: retries - 1, startTime });
-                        processQueue(queue, flagName, type);
-                    }, RETRY_DELAY);
-                    window[flagName] = false;
-                    return;
-                }
-                if (!r.ok) throw new Error(`HTTP ${r.status}`);
-                return type === 'geo' ? r.json() : r.text();
-            })
-            .then(resolve)
-            .catch(reject)
-            .finally(() => {
-                setTimeout(() => {
-                    window[flagName] = false;
-                    processQueue(queue, flagName, type);
-                }, DELAY);
-            });
+    // КЭШИРОВАНИЕ
+    const cacheKeyPrefix = 'geo_ip_';
+    function getCachedGeo(ip) {
+        const cached = sessionStorage.getItem(cacheKeyPrefix + ip);
+        if (!cached) return null;
+        const data = JSON.parse(cached);
+        console.log(`Используем кэш для IP ${ip}:`, data);
+        return data;
+    }
+    function setCachedGeo(ip, data) {
+        sessionStorage.setItem(cacheKeyPrefix + ip, JSON.stringify(data));
+        console.log(`Сохранены кэшированные данные для IP ${ip}:`, data);
+    }
+    const blackCacheKeyPrefix = 'black_ip_';
+    function getCachedBlack(ip) {
+        const cached = sessionStorage.getItem(blackCacheKeyPrefix + ip);
+        if (!cached) return null;
+        const data = JSON.parse(cached);
+        console.log(`Используем кэш blacklist для IP ${ip}:`, data);
+        return data;
+    }
+    function setCachedBlack(ip, data) {
+        sessionStorage.setItem(blackCacheKeyPrefix + ip, JSON.stringify(data));
+        console.log(`Сохранены кэшированные данные blacklist для IP ${ip}:`, data);
     }
 
-    function queueGeo(url) {
-        return new Promise((res, rej) => {
-            geoQueue.push({ url, resolve: res, reject: rej, retries: MAX_RETRIES, startTime: Date.now() });
-            processQueue(geoQueue, 'geoProcessing', 'geo');
+    // ОЧЕРЕДИ
+    const geoRequestQueue = [];
+    let isProcessingGeoQueue = false;
+    const geoDelay = 1000;
+    const retryDelay = 1500;
+    const maxRetries = 7;
+
+    async function processGeoQueue() {
+        if (isProcessingGeoQueue || geoRequestQueue.length === 0) return;
+        isProcessingGeoQueue = true;
+        const { url, format, resolve, reject, retries, startTime } = geoRequestQueue.shift();
+        try {
+            console.log(`Отправляем Geo запрос: ${url}`);
+            const response = await fetch(url);
+            if (response.status === 429 && retries > 0) {
+                console.log(`429 для Geo ${url}, повтор через ${retryDelay} мс, осталось попыток: ${retries}`);
+                geoRequestQueue.unshift({ url, format, resolve, reject, retries: retries - 1, startTime });
+                setTimeout(processGeoQueue, retryDelay);
+                isProcessingGeoQueue = false;
+                return;
+            }
+            if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            const data = await response.json();
+            console.log(`Получены Geo данные для ${url}:`, data);
+            resolve(data);
+        } catch (error) {
+            console.error(`Ошибка Geo для ${url}:`, error);
+            reject(error);
+        } finally {
+            console.log(`Geo запрос ${url} занял ${Date.now() - startTime} мс, ждём ${geoDelay} мс`);
+            setTimeout(() => {
+                isProcessingGeoQueue = false;
+                processGeoQueue();
+            }, geoDelay);
+        }
+    }
+    function queueGeoRequest(url, format = 'json') {
+        return new Promise((resolve, reject) => {
+            geoRequestQueue.push({ url, format, resolve, reject, retries: maxRetries, startTime: Date.now() });
+            processGeoQueue();
         });
     }
 
-    function queueBlack(url) {
-        return new Promise((res, rej) => {
-            blackQueue.push({ url, resolve: res, reject: rej, retries: MAX_RETRIES, startTime: Date.now() });
-            processQueue(blackQueue, 'blackProcessing', 'black');
+    const blackRequestQueue = [];
+    let isProcessingBlackQueue = false;
+    const blackDelay = 1000;
+
+    async function processBlackQueue() {
+        if (isProcessingBlackQueue || blackRequestQueue.length === 0) return;
+        isProcessingBlackQueue = true;
+        const { url, resolve, reject, retries, startTime } = blackRequestQueue.shift();
+        try {
+            console.log(`Отправляем Blacklist запрос: ${url}`);
+            const response = await fetch(url);
+            if (response.status === 429 && retries > 0) {
+                console.log(`429 для Blacklist ${url}, повтор через ${retryDelay} мс, осталось попыток: ${retries}`);
+                blackRequestQueue.unshift({ url, resolve, reject, retries: retries - 1, startTime });
+                setTimeout(processBlackQueue, retryDelay);
+                isProcessingBlackQueue = false;
+                return;
+            }
+            if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            const text = await response.text();
+            console.log(`Получены Blacklist данные для ${url}:`, text);
+            resolve(text);
+        } catch (error) {
+            console.error(`Ошибка Blacklist для ${url}:`, error);
+            reject(error);
+        } finally {
+            console.log(`Blacklist запрос ${url} занял ${Date.now() - startTime} мс, ждём ${blackDelay} мс`);
+            setTimeout(() => {
+                isProcessingBlackQueue = false;
+                processBlackQueue();
+            }, blackDelay);
+        }
+    }
+    function queueBlackRequest(url) {
+        return new Promise((resolve, reject) => {
+            blackRequestQueue.push({ url, resolve, reject, retries: maxRetries, startTime: Date.now() });
+            processBlackQueue();
         });
     }
 
@@ -83,23 +132,29 @@
     async function fetchGeo(ip) {
         const cached = getCachedGeo(ip);
         if (cached) return cached;
-
-        const data = await queueGeo(`https://api.2ip.io/${ip}?token=${TOKEN}&lang=ru`);
-        const result = {
-            country: `${data.country || 'N/A'} (${data.code || ''} ${data.emoji || ''})`.trim(),
-            city: `${data.city || 'N/A'} (${data.region || ''})`.trim(),
-            provider: 'N/A'
-        };
-        setCachedGeo(ip, result);
-        return result;
+        try {
+            const data = await queueGeoRequest(`https://api.2ip.io/${ip}?token=${TOKEN}&lang=ru`);
+            const result = {
+                country: `${data.country || 'N/A'} (${data.code || ''} ${data.emoji || ''})`,
+                city: `${data.city || 'N/A'} (${data.region || ''})`,
+                provider: 'N/A'
+            };
+            setCachedGeo(ip, result);
+            return result;
+        } catch (error) {
+            return { country: 'Ошибка', city: 'Ошибка', provider: 'N/A' };
+        }
     }
 
     async function fetchWhois(ip) {
         try {
-            const data = await queueGeo(`https://api.2ip.io/whois/${ip}?token=${TOKEN}`);
-            return data.whois?.network?.name || 'N/A';
-        } catch (e) {
-            console.error('Ошибка whois:', e);
+            const data = await queueGeoRequest(`https://api.2ip.io/whois/${ip}?token=${TOKEN}`);
+            const provider = data.whois?.network?.name || 'N/A';
+            const cached = getCachedGeo(ip) || { country: 'N/A', city: 'N/A', provider: 'N/A' };
+            cached.provider = provider;
+            setCachedGeo(ip, cached);
+            return provider;
+        } catch (error) {
             return 'N/A';
         }
     }
@@ -107,54 +162,139 @@
     async function fetchBlacklist(ip) {
         const cached = getCachedBlack(ip);
         if (cached) return cached;
-
-        const text = await queueBlack(`${location.origin}/pl/gc/tools/check-blacklist-qrator?ip=${ip}`);
-        const lines = text.split('\n').map(l => l.trim()).filter(l => l);
-        const result = { blacklist: lines.map(l => l.split(':')[0].trim()).filter(Boolean).join('<br>') || 'N/A' };
-        setCachedBlack(ip, result);
-        return result;
+        try {
+            const url = `${location.origin}/pl/gc/tools/check-blacklist-qrator?ip=${ip}`;
+            const text = await queueBlackRequest(url);
+            const lines = text.split('\n').map(l => l.trim()).filter(l => l);
+            const results = lines.map(line => line.split(':')[0].trim()).filter(Boolean).join('<br>');
+            const result = { blacklist: results || 'N/A' };
+            setCachedBlack(ip, result);
+            return result;
+        } catch (error) {
+            console.error(`Ошибка fetchBlacklist для ${ip}:`, error);
+            return { blacklist: 'Ошибка' };
+        }
     }
 
-    // Обновление ячеек
-    function updateGeo(ip, data, rows) {
+    // ОБНОВЛЕНИЕ ЯЧЕЕК
+    function updateGeo(ip, geoData, rows) {
+        let updatedCount = 0;
         rows.forEach(row => {
-            if (row.dataset.ip === ip) {
-                const cTd = row.querySelector('td[data-geo="country"]');
+            if (row.getAttribute('data-ip') === ip) {
+                const countryTd = row.querySelector('td[data-geo="country"]');
                 const cityTd = row.querySelector('td[data-geo="city"]');
-                if (cTd) cTd.innerHTML = data.country;
-                if (cityTd) cityTd.innerHTML = data.city;
+                if (countryTd) { countryTd.innerHTML = geoData.country; updatedCount++; }
+                if (cityTd) { cityTd.innerHTML = geoData.city; updatedCount++; }
             }
         });
+        console.log(`Обновлено geo для IP ${ip} в ${updatedCount} строках`);
     }
 
-    function updateProvider(ip, prov, rows) {
+    function updateProvider(ip, provider, rows) {
+        let updatedCount = 0;
         rows.forEach(row => {
-            if (row.dataset.ip === ip) {
-                const td = row.querySelector('td[data-geo="provider"]');
-                if (td) td.innerHTML = prov;
+            if (row.getAttribute('data-ip') === ip) {
+                const provTd = row.querySelector('td[data-geo="provider"]');
+                if (provTd) { provTd.innerHTML = provider; updatedCount++; }
             }
         });
+        console.log(`Обновлён provider для IP ${ip} в ${updatedCount} строках`);
     }
 
-    function updateBlack(ip, data, rows) {
+    function updateBlack(ip, blackData, rows) {
+        let updatedCount = 0;
         rows.forEach(row => {
-            if (row.dataset.ip === ip) {
-                const cont = row.children[2]?.querySelector('.blacklist-container');
-                if (cont) cont.innerHTML = data.blacklist;
+            if (row.getAttribute('data-ip') === ip) {
+                const container = row.children[2]?.querySelector('.blacklist-container');
+                if (container) { container.innerHTML = blackData.blacklist; updatedCount++; }
             }
         });
+        console.log(`Обновлён blacklist для IP ${ip} в ${updatedCount} строках`);
     }
 
     function setBlackLoading(ip, rows) {
         rows.forEach(row => {
-            if (row.dataset.ip === ip) {
-                const cont = row.children[2]?.querySelector('.blacklist-container');
-                if (cont) cont.innerHTML = 'Загрузка...';
+            if (row.getAttribute('data-ip') === ip) {
+                const container = row.children[2]?.querySelector('.blacklist-container');
+                if (container) container.innerHTML = 'Загрузка...';
             }
         });
     }
 
+    // КОПИРОВАНИЕ
+    function showNotification(message, targetElement) {
+        const notification = document.createElement('div');
+        notification.textContent = message;
+        notification.style.position = 'absolute';
+        notification.style.background = '#333';
+        notification.style.color = '#fff';
+        notification.style.padding = '5px 10px';
+        notification.style.borderRadius = '4px';
+        notification.style.zIndex = '1000';
+        notification.style.fontSize = '12px';
+        const rect = targetElement.getBoundingClientRect();
+        notification.style.left = `${rect.left + window.scrollX}px`;
+        notification.style.top = `${rect.bottom + window.scrollY + 5}px`;
+        document.body.appendChild(notification);
+        setTimeout(() => notification.remove(), 2000);
+    }
+
+    function copyToClipboard(text, targetElement) {
+        navigator.clipboard.writeText(text).then(() => {
+            showNotification(`Скопировано: ${text}`, targetElement);
+        }).catch(() => {
+            showNotification('Ошибка копирования', targetElement);
+        });
+    }
+
     let isProcessingTable = false;
+
+    function adjustSubtableColspan() {
+        const headerRow = document.querySelector('table.table.table-striped.table-bordered:not(.bg-gray) thead tr');
+        if (!headerRow) return false;
+        const totalColumns = headerRow.children.length;
+        const subRows = document.querySelectorAll('tr.row-hits');
+        let adjusted = false;
+        subRows.forEach(subRow => {
+            const subTd = subRow.querySelector('td[colspan]');
+            if (subTd && subTd.getAttribute('colspan') !== totalColumns.toString()) {
+                subTd.setAttribute('colspan', totalColumns);
+                adjusted = true;
+            }
+        });
+        return adjusted;
+    }
+
+    function disableGeoFeatures(rows) {
+        // (твой оригинальный код без изменений)
+        console.log('Отключаем функциональность Geo Lookup');
+        const table = document.querySelector('table.table.table-striped.table-bordered:not(.bg-gray)');
+        if (table) {
+            const headerRow = table.querySelector('thead tr');
+            if (headerRow) {
+                ['country', 'city', 'provider'].forEach(geoType => {
+                    const th = headerRow.querySelector(`th[data-geo="${geoType}"]`);
+                    if (th) th.remove();
+                });
+            }
+            rows.forEach(row => {
+                const ipTd = row.children[2];
+                ['country', 'city', 'provider'].forEach(geoType => {
+                    const td = row.querySelector(`td[data-geo="${geoType}"]`);
+                    if (td) td.remove();
+                });
+                const container = ipTd ? ipTd.querySelector('.blacklist-container') : null;
+                if (container) container.remove();
+                if (ipTd) {
+                    ipTd.style.cursor = ''; ipTd.style.textDecoration = ''; ipTd.style.color = ''; ipTd.title = ''; ipTd.onclick = null;
+                }
+            });
+            document.querySelectorAll('tr.row-hits td[colspan]').forEach(td => {
+                if (td.getAttribute('colspan') !== '7') td.setAttribute('colspan', '7');
+            });
+        }
+        observer.disconnect();
+    }
 
     function initGeoLookup() {
         if (isProcessingTable) return false;
@@ -166,53 +306,52 @@
         const headerRow = table.querySelector('thead tr');
         const ipTh = headerRow.children[2];
 
-        // Добавляем заголовки один раз
         if (!headerRow.querySelector('th[data-geo="country"]')) {
-            const thCountry = document.createElement('th'); thCountry.textContent = 'Страна'; thCountry.dataset.geo = 'country';
-            const thCity = document.createElement('th'); thCity.textContent = 'Город'; thCity.dataset.geo = 'city';
-            const thProv = document.createElement('th'); thProv.textContent = 'Провайдер'; thProv.dataset.geo = 'provider';
-            ipTh.after(thCountry); thCountry.after(thCity); thCity.after(thProv);
+            const countryTh = document.createElement('th'); countryTh.textContent = 'Страна'; countryTh.dataset.geo = 'country';
+            const cityTh = document.createElement('th'); cityTh.textContent = 'Город'; cityTh.dataset.geo = 'city';
+            const providerTh = document.createElement('th'); providerTh.textContent = 'Провайдер'; providerTh.dataset.geo = 'provider';
+            ipTh.after(countryTh); countryTh.after(cityTh); cityTh.after(providerTh);
         }
 
-        // Уникальные IP + автозагрузка только для первых 7 на странице 1
         const uniqueIPs = new Set();
-        rows.forEach(r => {
-            const ip = extractIP(r.children[2]?.textContent || '');
+        rows.forEach(row => {
+            const ip = extractIP(row.children[2]?.textContent || '');
             if (ip && isValidIP(ip)) uniqueIPs.add(ip);
         });
 
-        const pageEl = document.querySelector('.pagination .active a[data-page]');
-        const currentPage = pageEl ? (parseInt(pageEl.dataset.page) || 0) + 1 : 1;
-        const autoLoadIPs = currentPage === 1 ? Array.from(uniqueIPs).slice(0, 7) : [];
+        const pageElement = document.querySelector('.pagination .active a[data-page]');
+        const currentPage = pageElement ? (parseInt(pageElement.getAttribute('data-page') || 0) + 1).toString() : '1';
+        const autoLoadIPs = currentPage === '1' ? Array.from(uniqueIPs).slice(0, 7) : [];
+
+        if (autoLoadIPs.length > 0) {
+            console.log(`Автозагрузка Geo для первых 7 IP:`, autoLoadIPs);
+        }
 
         rows.forEach(row => {
             const ipTd = row.children[2];
             const ip = extractIP(ipTd?.textContent || '');
             if (!ip || !isValidIP(ip)) return;
 
-            row.dataset.ip = ip;
-
-            // Клик по IP — копировать
+            row.setAttribute('data-ip', ip);
             ipTd.style.cursor = 'pointer';
             ipTd.style.textDecoration = 'underline';
             ipTd.style.color = 'blue';
             ipTd.title = 'Клик — скопировать &dev-request-ip=' + ip;
-            ipTd.onclick = () => navigator.clipboard.writeText(`&dev-request-ip=${ip}`).catch(() => {});
+            ipTd.onclick = () => copyToClipboard(`&dev-request-ip=${ip}`, ipTd);
 
-            // Создаём ячейки, если их нет
-            ['country', 'city', 'provider'].forEach(type => {
-                if (!row.querySelector(`td[data-geo="${type}"]`)) {
-                    const td = document.createElement('td');
-                    td.dataset.geo = type;
-                    row.appendChild(td);
-                }
-            });
+            // Ячейки
+            if (!row.querySelector('td[data-geo="country"]')) {
+                const countryTd = document.createElement('td'); countryTd.dataset.geo = 'country';
+                const cityTd = document.createElement('td'); cityTd.dataset.geo = 'city';
+                const providerTd = document.createElement('td'); providerTd.dataset.geo = 'provider';
+                ipTd.after(countryTd); countryTd.after(cityTd); cityTd.after(providerTd);
+            }
 
             const countryTd = row.querySelector('td[data-geo="country"]');
             const cityTd = row.querySelector('td[data-geo="city"]');
-            const provTd = row.querySelector('td[data-geo="provider"]');
+            const providerTd = row.querySelector('td[data-geo="provider"]');
 
-            // Geo (страна + город)
+            // Geo
             const cachedGeo = getCachedGeo(ip);
             if (cachedGeo) {
                 countryTd.innerHTML = cachedGeo.country;
@@ -225,24 +364,22 @@
                 btn.textContent = 'Загрузить';
                 btn.onclick = e => {
                     e.stopPropagation();
-                    btn.disabled = true;
-                    btn.textContent = 'Загрузка...';
+                    btn.disabled = true; btn.textContent = 'Загрузка...';
                     fetchGeo(ip).then(d => updateGeo(ip, d, rows));
                 };
                 countryTd.appendChild(btn);
             }
 
             // Провайдер — всегда кнопка
-            if (!provTd.innerHTML.trim()) {
+            if (!providerTd.innerHTML) {
                 const btn = document.createElement('button');
                 btn.textContent = 'Загрузить';
                 btn.onclick = e => {
                     e.stopPropagation();
-                    btn.disabled = true;
-                    btn.textContent = 'Загрузка...';
-                    fetchWhois(ip).then(p => { provTd.innerHTML = p; });
+                    btn.disabled = true; btn.textContent = 'Загрузка...';
+                    fetchWhois(ip).then(p => updateProvider(ip, p, rows));
                 };
-                provTd.appendChild(btn);
+                providerTd.appendChild(btn);
             }
 
             // Blacklist — только кнопка, автозагрузки нет
@@ -270,79 +407,89 @@
                     setBlackLoading(ip, rows);
                     fetchBlacklist(ip).then(data => {
                         updateBlack(ip, data, rows);
-                        btn.remove(); // кнопка исчезает после загрузки
+                        btn.remove(); // кнопка исчезает
                     });
                 };
                 container.appendChild(btn);
             }
         });
 
-        // Автозагрузка Geo для первых 7 IP
+        // Автозагрузка только Geo (без blacklist)
         if (autoLoadIPs.length > 0) {
-            let i = 0;
+            let index = 0;
             const next = () => {
-                if (i >= autoLoadIPs.length) {
+                if (index >= autoLoadIPs.length) {
                     isProcessingTable = false;
+                    adjustSubtableColspan();
                     return;
                 }
-                const ip = autoLoadIPs[i++];
+                const ip = autoLoadIPs[index++];
                 fetchGeo(ip)
-                    .then(d => updateGeo(ip, d, rows))
+                    .then(geoData => updateGeo(ip, geoData, rows))
                     .finally(next);
             };
             next();
         } else {
             isProcessingTable = false;
+            adjustSubtableColspan();
         }
 
         return true;
     }
 
-    // MutationObserver
-    const observer = new MutationObserver(mutations => {
+    // Твой оригинальный MutationObserver и тумблер — без изменений
+    const targetNode = document.querySelector('#tabContentVisits') || document.body;
+    const observer = new MutationObserver((mutations) => {
         if (isProcessingTable) return;
-        for (const m of mutations) {
-            if (m.addedNodes.length) {
-                for (const node of m.addedNodes) {
-                    if (node.nodeType === 1 && (node.matches('table.table.table-striped.table-bordered:not(.bg-gray)') || node.querySelector('table.table.table-striped.table-bordered:not(.bg-gray)'))) {
-                        initGeoLookup();
-                        return;
-                    }
-                }
+        let tableChanged = false;
+        let subtableAdded = false;
+        for (const mutation of mutations) {
+            if (mutation.addedNodes.length || mutation.removedNodes.length) {
+                const mainTableChanged = Array.from(mutation.addedNodes).some(node => node.nodeType === 1 && (
+                    node.matches('table.table.table-striped.table-bordered:not(.bg-gray)') ||
+                    node.querySelector('table.table.table-striped.table-bordered:not(.bg-gray)') ||
+                    (node.matches('tbody') && node.closest('table.table.table-striped.table-bordered:not(.bg-gray)'))
+                ));
+                const subTableChanged = Array.from(mutation.addedNodes).some(node => node.nodeType === 1 && (
+                    node.matches('tr.row-hits') || node.querySelector('tr.row-hits')
+                ));
+                if (mainTableChanged) tableChanged = true;
+                if (subTableChanged) subtableAdded = true;
             }
         }
+        if (tableChanged) initGeoLookup();
+        else if (subtableAdded) adjustSubtableColspan();
     });
 
-    // Тумблер Вкл/Выкл
     function createToggle() {
-        const label = document.createElement('label');
-        label.style.cssText = 'position:fixed;right:10px;top:15%;z-index:10000;display:flex;align-items:center;gap:8px;cursor:pointer;background:#333;color:#fff;padding:8px 12px;border-radius:6px;font-size:14px;';
-        const checkbox = document.createElement('input');
-        checkbox.type = 'checkbox';
-        checkbox.style.width = '20px';
-        checkbox.style.height = '20px';
-        const span = document.createElement('span');
-        span.textContent = 'Geo+Blacklist';
+        const toggleContainer = document.createElement('label');
+        toggleContainer.style.cssText = 'position:fixed;right:1%;top:15%;z-index:1000;display:flex;align-items:center;cursor:pointer;background:rgba(0,0,0,0.7);color:#fff;padding:8px 12px;border-radius:6px;';
+        const toggleInput = document.createElement('input');
+        toggleInput.type = 'checkbox';
+        toggleInput.style.marginRight = '8px';
+        const toggleLabel = document.createElement('span');
+        toggleLabel.textContent = 'Geo+Blacklist';
 
-        label.append(checkbox, span);
-        document.body.appendChild(label);
+        toggleContainer.appendChild(toggleInput);
+        toggleContainer.appendChild(toggleLabel);
+        document.body.appendChild(toggleContainer);
 
-        const enabled = sessionStorage.getItem('geoEnhancerEnabled') !== 'false';
-        checkbox.checked = enabled;
+        const isEnabled = sessionStorage.getItem('geoLookupEnabled') !== 'false';
+        toggleInput.checked = isEnabled;
 
-        if (enabled) {
-            observer.observe(document.querySelector('#tabContentVisits') || document.body, { childList: true, subtree: true });
+        if (isEnabled) {
+            observer.observe(targetNode, { childList: true, subtree: true });
             initGeoLookup();
         }
 
-        checkbox.addEventListener('change', () => {
-            sessionStorage.setItem('geoEnhancerEnabled', checkbox.checked);
-            if (checkbox.checked) {
-                observer.observe(document.querySelector('#tabContentVisits') || document.body, { childList: true, subtree: true });
+        toggleInput.addEventListener('change', () => {
+            sessionStorage.setItem('geoLookupEnabled', toggleInput.checked);
+            if (toggleInput.checked) {
+                observer.observe(targetNode, { childList: true, subtree: true });
                 initGeoLookup();
             } else {
                 observer.disconnect();
-                location.reload(); // проще всего — перезагрузить страницу
+                location.reload();
             }
         });
     }
