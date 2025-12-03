@@ -424,12 +424,19 @@
                 if (subTableChanged) subtableAdded = true;
             }
         }
-        if (tableChanged) initGeoLookup();
-        else if (subtableAdded) adjustSubtableColspan();
+        if (tableChanged) {
+            initGeoLookup();
+            // СБРАСЫВАЕМ ТУМБЛЕР ХИТОВ ПРИ ЛЮБОМ ОБНОВЛЕНИИ ТАБЛИЦЫ
+            if (window.hitsToggleCheckbox) {
+                window.hitsToggleCheckbox.checked = false;
+            }
+        } else if (subtableAdded) {
+            adjustSubtableColspan();
+        }
     });
 
-    // === ТУМБЛЕР GEO LOOKUP (оригинальный) ===
-    function createGeoToggle() {
+    // ТУМБЛЕР GEO LOOKUP (твой оригинальный)
+    function createToggle() {
         const toggleContainer = document.createElement('label');
         toggleContainer.style.position = 'fixed';
         toggleContainer.style.right = '1%';
@@ -438,22 +445,17 @@
         toggleContainer.style.display = 'flex';
         toggleContainer.style.alignItems = 'center';
         toggleContainer.style.cursor = 'pointer';
-        toggleContainer.style.background = 'rgba(255,255,255,0.9)';
-        toggleContainer.style.padding = '8px 12px';
-        toggleContainer.style.borderRadius = '8px';
-        toggleContainer.style.boxShadow = '0 2px 10px rgba(0,0,0,0.2)';
 
         const toggleInput = document.createElement('input');
         toggleInput.type = 'checkbox';
-        toggleInput.style.width = '22px';
-        toggleInput.style.height = '22px';
-        toggleInput.style.marginRight = '10px';
+        toggleInput.style.width = '20px';
+        toggleInput.style.height = '20px';
+        toggleInput.style.marginRight = '1px';
         toggleInput.style.cursor = 'pointer';
 
         const toggleLabel = document.createElement('span');
-        toggleLabel.textContent = 'Geo Lookup';
-        toggleLabel.style.fontSize = '15px';
-        toggleLabel.style.fontWeight = 'bold';
+        toggleLabel.textContent = 'Выкл/Вкл';
+        toggleLabel.style.fontSize = '16px';
         toggleLabel.style.color = '#333';
 
         toggleContainer.appendChild(toggleInput);
@@ -483,7 +485,7 @@
         });
     }
 
-    // === НОВЫЙ ТУМБЛЕР: АВТОРАСКРЫТИЕ ХИТОВ ===
+    // НОВЫЙ ТУМБЛЕР: АВТОРАСКРЫТИЕ ХИТОВ
     let hitsAbort = false;
     let isExpandingHits = false;
 
@@ -504,85 +506,75 @@
 
         for (const link of links) {
             if (hitsAbort) {
-                console.log('Автораскрытие хитов прервано');
+                console.log('Автораскрытие прервано пользователем');
                 break;
             }
 
             const row = link.closest('tr');
-            const nextRow = row.nextElementSibling;
-            if (nextRow && nextRow.classList.contains('row-hits')) continue;
+            if (row.nextElementSibling?.classList.contains('row-hits')) continue;
 
             link.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
 
-            try {
-                await new Promise((resolve) => {
-                    let resolved = false;
-                    const timeout = setTimeout(() => {
+            await new Promise(resolve => {
+                let resolved = false;
+                const timeout = setTimeout(() => {
+                    if (!resolved) {
+                        resolved = true;
+                        console.log('Таймаут ожидания подтаблицы — идём дальше');
+                        resolve();
+                    }
+                }, 8000);
+
+                const check = () => {
+                    if (row.nextElementSibling?.classList.contains('row-hits')) {
                         if (!resolved) {
                             resolved = true;
+                            clearTimeout(timeout);
                             resolve();
                         }
-                    }, 10000);
+                    }
+                };
 
-                    const check = () => {
-                        const currentNext = row.nextElementSibling;
-                        if (currentNext && currentNext.classList.contains('row-hits')) {
-                            if (!resolved) {
-                                resolved = true;
-                                clearTimeout(timeout);
-                                resolve();
-                            }
-                        }
-                    };
-
-                    const tempObserver = new MutationObserver(check);
-                    tempObserver.observe(row.parentNode, { childList: true, subtree: true });
-                    check();
-                });
-            } catch (e) { /* игнорируем таймауты */ }
+                const tempObs = new MutationObserver(check);
+                tempObs.observe(row.parentNode, { childList: true, subtree: true });
+                check();
+            });
         }
 
-        console.log('Все хиты раскрыты');
+        console.log('Все доступные хиты раскрыты');
         isExpandingHits = false;
     }
 
     function createHitsToggle() {
-        const container = document.createElement('div');
-        container.style.position = 'fixed';
-        container.style.right = '1%';
-        container.style.top = '22%';
-        container.style.zIndex = '1000';
-        container.style.background = 'rgba(255,255,255,0.9)';
-        container.style.padding = '8px 12px';
-        container.style.borderRadius = '8px';
-        container.style.boxShadow = '0 2px 10px rgba(0,0,0,0.2)';
+        const toggleContainer = document.createElement('label');
+        toggleContainer.style.position = 'fixed';
+        toggleContainer.style.right = '1%';
+        toggleContainer.style.top = '19%';
+        toggleContainer.style.zIndex = '1000';
+        toggleContainer.style.display = 'flex';
+        toggleContainer.style.alignItems = 'center';
+        toggleContainer.style.cursor = 'pointer';
 
-        const label = document.createElement('label');
-        label.style.display = 'flex';
-        label.style.alignItems = 'center';
-        label.style.cursor = 'pointer';
+        const toggleInput = document.createElement('input');
+        toggleInput.type = 'checkbox';
+        toggleInput.style.width = '20px';
+        toggleInput.style.height = '20px';
+        toggleInput.style.marginRight = '1px';
+        toggleInput.style.cursor = 'pointer';
 
-        const checkbox = document.createElement('input');
-        checkbox.type = 'checkbox';
-        checkbox.style.width = '22px';
-        checkbox.style.height = '22px';
-        checkbox.style.marginRight = '10px';
+        const toggleLabel = document.createElement('span');
+        toggleLabel.textContent = 'Хиты';
+        toggleLabel.style.fontSize = '16px';
+        toggleLabel.style.color = '#333';
 
-        const text = document.createElement('span');
-        text.textContent = 'Автораскрытие хитов';
-        text.style.fontSize = '15px';
-        text.style.fontWeight = 'bold';
-        text.style.color = '#333';
+        toggleContainer.appendChild(toggleInput);
+        toggleContainer.appendChild(toggleLabel);
+        document.body.appendChild(toggleContainer);
 
-        label.appendChild(checkbox);
-        label.appendChild(text);
-        container.appendChild(label);
-        document.body.appendChild(container);
+        window.hitsToggleCheckbox = toggleInput; // для сброса при смене страницы
 
-        checkbox.checked = false; // по умолчанию ВЫКЛЮЧЕНО
-
-        checkbox.addEventListener('change', () => {
-            if (checkbox.checked) {
+        toggleInput.addEventListener('change', () => {
+            if (toggleInput.checked) {
                 console.log('Автораскрытие хитов: ВКЛ');
                 expandAllHits();
             } else {
@@ -590,22 +582,10 @@
                 hitsAbort = true;
             }
         });
-
-        // Сброс при смене страницы/фильтров
-        const resetHitsToggle = () => {
-            checkbox.checked = false;
-            hitsAbort = true;
-        };
-        const origPushState = history.pushState;
-        history.pushState = function() {
-            origPushState.apply(this, arguments);
-            resetHitsToggle();
-        };
-        window.addEventListener('popstate', resetHitsToggle);
     }
 
-    // Запуск
-    createGeoToggle();
+    // ЗАПУСК
+    createToggle();
     createHitsToggle();
 
 })();
