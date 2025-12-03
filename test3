@@ -1,20 +1,15 @@
 (function() {
-    // Плейсхолдер токена, заменяется загрузчиком
     const TOKEN = '{TOKEN}';
-    // Проверяем, соответствует ли текущая страница шаблону
     if (!window.location.pathname.startsWith('/pl/metrika/user/')) {
-        console.log('Не  на целевой странице.');
+        console.log('Не на целевой странице.');
         return;
     }
-    // Логируем HTTPS-контекст для отладки
     console.log('Secure context:', window.isSecureContext, 'Protocol:', location.protocol);
 
-    // Функция для проверки валидности IP-адреса
     function isValidIP(ip) {
         const ipRegex = /^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/;
         return ipRegex.test(ip);
     }
-    // Функция для извлечения чистого IP из textContent
     function extractIP(text) {
         return text.replace(/\s*\n.*$/, '').trim();
     }
@@ -74,7 +69,6 @@
             console.error(`Ошибка Geo для ${url}:`, error);
             reject(error);
         } finally {
-            console.log(`Geo запрос ${url} занял ${Date.now() - startTime} мс, ждём ${geoDelay} мс`);
             setTimeout(() => {
                 isProcessingGeoQueue = false;
                 processGeoQueue();
@@ -114,7 +108,6 @@
             console.error(`Ошибка Blacklist для ${url}:`, error);
             reject(error);
         } finally {
-            console.log(`Blacklist запрос ${url} занял ${Date.now() - startTime} мс, ждём ${blackDelay} мс`);
             setTimeout(() => {
                 isProcessingBlackQueue = false;
                 processBlackQueue();
@@ -149,11 +142,7 @@
     async function fetchWhois(ip) {
         try {
             const data = await queueGeoRequest(`https://api.2ip.io/whois/${ip}?token=${TOKEN}`);
-            const provider = data.whois?.network?.name || 'N/A';
-            const cached = getCachedGeo(ip) || { country: 'N/A', city: 'N/A', provider: 'N/A' };
-            cached.provider = provider;
-            setCachedGeo(ip, cached);
-            return provider;
+            return data.whois?.network?.name || 'N/A';
         } catch (error) {
             return 'N/A';
         }
@@ -221,7 +210,6 @@
         });
     }
 
-    // КОПИРОВАНИЕ
     function showNotification(message, targetElement) {
         const notification = document.createElement('div');
         notification.textContent = message;
@@ -266,7 +254,6 @@
     }
 
     function disableGeoFeatures(rows) {
-        // (твой оригинальный код без изменений)
         console.log('Отключаем функциональность Geo Lookup');
         const table = document.querySelector('table.table.table-striped.table-bordered:not(.bg-gray)');
         if (table) {
@@ -339,7 +326,6 @@
             ipTd.title = 'Клик — скопировать &dev-request-ip=' + ip;
             ipTd.onclick = () => copyToClipboard(`&dev-request-ip=${ip}`, ipTd);
 
-            // Ячейки
             if (!row.querySelector('td[data-geo="country"]')) {
                 const countryTd = document.createElement('td'); countryTd.dataset.geo = 'country';
                 const cityTd = document.createElement('td'); cityTd.dataset.geo = 'city';
@@ -351,7 +337,6 @@
             const cityTd = row.querySelector('td[data-geo="city"]');
             const providerTd = row.querySelector('td[data-geo="provider"]');
 
-            // Geo
             const cachedGeo = getCachedGeo(ip);
             if (cachedGeo) {
                 countryTd.innerHTML = cachedGeo.country;
@@ -370,7 +355,6 @@
                 countryTd.appendChild(btn);
             }
 
-            // Провайдер — всегда кнопка
             if (!providerTd.innerHTML) {
                 const btn = document.createElement('button');
                 btn.textContent = 'Загрузить';
@@ -382,7 +366,6 @@
                 providerTd.appendChild(btn);
             }
 
-            // Blacklist — только кнопка, автозагрузки нет
             let container = ipTd.querySelector('.blacklist-container');
             if (!container) {
                 container = document.createElement('div');
@@ -407,14 +390,13 @@
                     setBlackLoading(ip, rows);
                     fetchBlacklist(ip).then(data => {
                         updateBlack(ip, data, rows);
-                        btn.remove(); // кнопка исчезает
+                        btn.remove();
                     });
                 };
                 container.appendChild(btn);
             }
         });
 
-        // Автозагрузка только Geo (без blacklist)
         if (autoLoadIPs.length > 0) {
             let index = 0;
             const next = () => {
@@ -437,7 +419,6 @@
         return true;
     }
 
-    // Твой оригинальный MutationObserver и тумблер — без изменений
     const targetNode = document.querySelector('#tabContentVisits') || document.body;
     const observer = new MutationObserver((mutations) => {
         if (isProcessingTable) return;
@@ -461,14 +442,28 @@
         else if (subtableAdded) adjustSubtableColspan();
     });
 
+    // ВОССТАНОВЛЕННЫЙ ТВОЙ ОРИГИНАЛЬНЫЙ ТУМБЛЕР
     function createToggle() {
         const toggleContainer = document.createElement('label');
-        toggleContainer.style.cssText = 'position:fixed;right:1%;top:15%;z-index:1000;display:flex;align-items:center;cursor:pointer;background:rgba(0,0,0,0.7);color:#fff;padding:8px 12px;border-radius:6px;';
+        toggleContainer.style.position = 'fixed';
+        toggleContainer.style.right = '1%';
+        toggleContainer.style.top = '15%';
+        toggleContainer.style.zIndex = '1000';
+        toggleContainer.style.display = 'flex';
+        toggleContainer.style.alignItems = 'center';
+        toggleContainer.style.cursor = 'pointer';
+
         const toggleInput = document.createElement('input');
         toggleInput.type = 'checkbox';
-        toggleInput.style.marginRight = '8px';
+        toggleInput.style.width = '20px';
+        toggleInput.style.height = '20px';
+        toggleInput.style.marginRight = '1px';
+        toggleInput.style.cursor = 'pointer';
+
         const toggleLabel = document.createElement('span');
-        toggleLabel.textContent = 'Geo+Blacklist';
+        toggleLabel.textContent = 'Выкл/Вкл';
+        toggleLabel.style.fontSize = '16px';
+        toggleLabel.style.color = '#333';
 
         toggleContainer.appendChild(toggleInput);
         toggleContainer.appendChild(toggleLabel);
@@ -483,13 +478,18 @@
         }
 
         toggleInput.addEventListener('change', () => {
-            sessionStorage.setItem('geoLookupEnabled', toggleInput.checked);
+            const table = document.querySelector('table.table.table-striped.table-bordered:not(.bg-gray)');
+            const rows = table ? Array.from(table.querySelectorAll('tbody tr:not(.row-hits)')) : [];
+
             if (toggleInput.checked) {
+                console.log('Включаем Geo Lookup');
+                sessionStorage.setItem('geoLookupEnabled', 'true');
                 observer.observe(targetNode, { childList: true, subtree: true });
                 initGeoLookup();
             } else {
-                observer.disconnect();
-                location.reload();
+                console.log('Выключаем Geo Lookup');
+                sessionStorage.setItem('geoLookupEnabled', 'false');
+                disableGeoFeatures(rows);
             }
         });
     }
