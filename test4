@@ -1,0 +1,611 @@
+(function() {
+    const TOKEN = '{TOKEN}';
+    if (!window.location.pathname.startsWith('/pl/metrika/user/')) {
+        console.log('Не на целевой странице.');
+        return;
+    }
+    console.log('Secure context:', window.isSecureContext, 'Protocol:', location.protocol);
+
+    function isValidIP(ip) {
+        const ipRegex = /^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/;
+        return ipRegex.test(ip);
+    }
+    function extractIP(text) {
+        return text.replace(/\s*\n.*$/, '').trim();
+    }
+
+    // КЭШИРОВАНИЕ
+    const cacheKeyPrefix = 'geo_ip_';
+    function getCachedGeo(ip) {
+        const cached = sessionStorage.getItem(cacheKeyPrefix + ip);
+        if (!cached) return null;
+        const data = JSON.parse(cached);
+        console.log(`Используем кэш для IP ${ip}:`, data);
+        return data;
+    }
+    function setCachedGeo(ip, data) {
+        sessionStorage.setItem(cacheKeyPrefix + ip, JSON.stringify(data));
+        console.log(`Сохранены кэшированные данные для IP ${ip}:`, data);
+    }
+
+    const blackCacheKeyPrefix = 'black_ip_';
+    function getCachedBlack(ip) {
+        const cached = sessionStorage.getItem(blackCacheKeyPrefix + ip);
+        if (!cached) return null;
+        const data = JSON.parse(cached);
+        console.log(`Используем кэш blacklist для IP ${ip}:`, data);
+        return data;
+    }
+    function setCachedBlack(ip, data) {
+        sessionStorage.setItem(blackCacheKeyPrefix + ip, JSON.stringify(data));
+        console.log(`Сохранены кэшированные данные blacklist для IP ${ip}:`, data);
+    }
+
+    // ОЧЕРЕДИ
+    const geoRequestQueue = [];
+    let isProcessingGeoQueue = false;
+    const geoDelay = 1000;
+    const retryDelay = 1500;
+    const maxRetries = 7;
+
+    async function processGeoQueue() {
+        if (isProcessingGeoQueue || geoRequestQueue.length === 0) return;
+        isProcessingGeoQueue = true;
+        const { url, format, resolve, reject, retries } = geoRequestQueue.shift();
+        try {
+            console.log(`Отправляем Geo запрос: ${url}`);
+            const response = await fetch(url);
+            if (response.status === 429 && retries > 0) {
+                console.log(`429 для Geo ${url}, повтор через ${retryDelay} мс, осталось попыток: ${retries}`);
+                geoRequestQueue.unshift({ url, format, resolve, reject, retries: retries - 1 });
+                setTimeout(processGeoQueue, retryDelay);
+                isProcessingGeoQueue = false;
+                return;
+            }
+            if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            const data = await response.json();
+            console.log(`Получены Geo данные для ${url}:`, data);
+            resolve(data);
+        } catch (error) {
+            console.error(`Ошибка Geo для ${url}:`, error);
+            reject(error);
+        } finally {
+            setTimeout(() => {
+                isProcessingGeoQueue = false;
+                processGeoQueue();
+            }, geoDelay);
+        }
+    }
+    function queueGeoRequest(url, format = 'json') {
+        return new Promise((resolve, reject) => {
+            geoRequestQueue.push({ url, format, resolve, reject, retries: maxRetries });
+            processGeoQueue();
+        });
+    }
+
+    const blackRequestQueue = [];
+    let isProcessingBlackQueue = false;
+    const blackDelay = 1000;
+
+    async function processBlackQueue() {
+        if (isProcessingBlackQueue || blackRequestQueue.length === 0) return;
+        isProcessingBlackQueue = true;
+        const { url, resolve, reject, retries } = blackRequestQueue.shift();
+        try {
+            console.log(`Отправляем Blacklist запрос: ${url}`);
+            const response = await fetch(url);
+            if (response.status === 429 && retries > 0) {
+                console.log(`429 для Blacklist ${url}, повтор через ${retryDelay} мс, осталось попыток: ${retries}`);
+                blackRequestQueue.unshift({ url, resolve, reject, retries: retries - 1 });
+                setTimeout(processBlackQueue, retryDelay);
+                isProcessingBlackQueue = false;
+                return;
+            }
+            if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            const text = await response.text();
+            console.log(`Получены Blacklist данные для ${url}:`, text);
+            resolve(text);
+        } catch (error) {
+            console.error(`Ошибка Blacklist для ${url}:`, error);
+            reject(error);
+        } finally {
+            setTimeout(() => {
+                isProcessingBlackQueue = false;
+                processBlackQueue();
+            }, blackDelay);
+        }
+    }
+    function queueBlackRequest(url) {
+        return new Promise((resolve, reject) => {
+            blackRequestQueue.push({ url, resolve, reject, retries: maxRetries });
+            processBlackQueue();
+        });
+    }
+
+    // API
+    async function fetchGeo(ip) {
+        const cached = getCachedGeo(ip);
+        if (cached) return cached;
+        try {
+            const data = await queueGeoRequest(`https://api.2ip.io/${ip}?token=${TOKEN}&lang=ru`);
+            const result = {
+                country: `${data.country || 'N/A'} (${data.code || ''} ${data.emoji || ''})`,
+                city: `${data.city || 'N/A'} (${data.region || ''})`,
+                provider: 'N/A'
+            };
+            setCachedGeo(ip, result);
+            return result;
+        } catch (error) {
+            return { country: 'Ошибка', city: 'Ошибка', provider: 'N/A' };
+        }
+    }
+    async function fetchWhois(ip) {
+        try {
+            const data = await queueGeoRequest(`https://api.2ip.io/whois/${ip}?token=${TOKEN}`);
+            return data.whois?.network?.name || 'N/A';
+        } catch (error) {
+            return 'N/A';
+        }
+    }
+    async function fetchBlacklist(ip) {
+        const cached = getCachedBlack(ip);
+        if (cached) return cached;
+        try {
+            const url = `${location.origin}/pl/gc/tools/check-blacklist-qrator?ip=${ip}`;
+            const text = await queueBlackRequest(url);
+            const lines = text.split('\n').map(l => l.trim()).filter(l => l);
+            const results = lines.map(line => line.split(':')[0].trim()).filter(Boolean).join('<br>');
+            const result = { blacklist: results || 'N/A' };
+            setCachedBlack(ip, result);
+            return result;
+        } catch (error) {
+            console.error(`Ошибка fetchBlacklist для ${ip}:`, error);
+            return { blacklist: 'Ошибка' };
+        }
+    }
+
+    // ОБНОВЛЕНИЕ ЯЧЕЕК
+    function updateGeo(ip, geoData, rows) {
+        let updatedCount = 0;
+        rows.forEach(row => {
+            if (row.getAttribute('data-ip') === ip) {
+                const countryTd = row.querySelector('td[data-geo="country"]');
+                const cityTd = row.querySelector('td[data-geo="city"]');
+                if (countryTd) { countryTd.innerHTML = geoData.country; updatedCount++; }
+                if (cityTd) { cityTd.innerHTML = geoData.city; updatedCount++; }
+            }
+        });
+        console.log(`Обновлено geo для IP ${ip} в ${updatedCount} строках`);
+    }
+    function updateProvider(ip, provider, rows) {
+        let updatedCount = 0;
+        rows.forEach(row => {
+            if (row.getAttribute('data-ip') === ip) {
+                const provTd = row.querySelector('td[data-geo="provider"]');
+                if (provTd) { provTd.innerHTML = provider; updatedCount++; }
+            }
+        });
+        console.log(`Обновлён provider для IP ${ip} в ${updatedCount} строках`);
+    }
+    function updateBlack(ip, blackData, rows) {
+        let updatedCount = 0;
+        rows.forEach(row => {
+            if (row.getAttribute('data-ip') === ip) {
+                const container = row.children[2]?.querySelector('.blacklist-container');
+                if (container) { container.innerHTML = blackData.blacklist; updatedCount++; }
+            }
+        });
+        console.log(`Обновлён blacklist для IP ${ip} в ${updatedCount} строках`);
+    }
+    function setBlackLoading(ip, rows) {
+        rows.forEach(row => {
+            if (row.getAttribute('data-ip') === ip) {
+                const container = row.children[2]?.querySelector('.blacklist-container');
+                if (container) container.innerHTML = 'Загрузка...';
+            }
+        });
+    }
+
+    function showNotification(message, targetElement) {
+        const notification = document.createElement('div');
+        notification.textContent = message;
+        notification.style.position = 'absolute';
+        notification.style.background = '#333';
+        notification.style.color = '#fff';
+        notification.style.padding = '5px 10px';
+        notification.style.borderRadius = '4px';
+        notification.style.zIndex = '1000';
+        notification.style.fontSize = '12px';
+        const rect = targetElement.getBoundingClientRect();
+        notification.style.left = `${rect.left + window.scrollX}px`;
+        notification.style.top = `${rect.bottom + window.scrollY + 5}px`;
+        document.body.appendChild(notification);
+        setTimeout(() => notification.remove(), 2000);
+    }
+    function copyToClipboard(text, targetElement) {
+        navigator.clipboard.writeText(text).then(() => {
+            showNotification(`Скопировано: ${text}`, targetElement);
+        }).catch(() => {
+            showNotification('Ошибка копирования', targetElement);
+        });
+    }
+
+    let isProcessingTable = false;
+
+    function adjustSubtableColspan() {
+        const headerRow = document.querySelector('table.table.table-striped.table-bordered:not(.bg-gray) thead tr');
+        if (!headerRow) return false;
+        const totalColumns = headerRow.children.length;
+        const subRows = document.querySelectorAll('tr.row-hits');
+        let adjusted = false;
+        subRows.forEach(subRow => {
+            const subTd = subRow.querySelector('td[colspan]');
+            if (subTd && subTd.getAttribute('colspan') !== totalColumns.toString()) {
+                subTd.setAttribute('colspan', totalColumns);
+                adjusted = true;
+            }
+        });
+        return adjusted;
+    }
+
+    function disableGeoFeatures(rows) {
+        console.log('Отключаем функциональность Geo Lookup');
+        const table = document.querySelector('table.table.table-striped.table-bordered:not(.bg-gray)');
+        if (table) {
+            const headerRow = table.querySelector('thead tr');
+            if (headerRow) {
+                ['country', 'city', 'provider'].forEach(geoType => {
+                    const th = headerRow.querySelector(`th[data-geo="${geoType}"]`);
+                    if (th) th.remove();
+                });
+            }
+            rows.forEach(row => {
+                const ipTd = row.children[2];
+                ['country', 'city', 'provider'].forEach(geoType => {
+                    const td = row.querySelector(`td[data-geo="${geoType}"]`);
+                    if (td) td.remove();
+                });
+                const container = ipTd ? ipTd.querySelector('.blacklist-container') : null;
+                if (container) container.remove();
+                if (ipTd) {
+                    ipTd.style.cursor = ''; ipTd.style.textDecoration = ''; ipTd.style.color = ''; ipTd.title = ''; ipTd.onclick = null;
+                }
+            });
+            document.querySelectorAll('tr.row-hits td[colspan]').forEach(td => {
+                if (td.getAttribute('colspan') !== '7') td.setAttribute('colspan', '7');
+            });
+        }
+        observer.disconnect();
+    }
+
+    function initGeoLookup() {
+        if (isProcessingTable) return false;
+        const table = document.querySelector('table.table.table-striped.table-bordered:not(.bg-gray)');
+        if (!table) return false;
+        isProcessingTable = true;
+        const rows = Array.from(table.querySelectorAll('tbody tr:not(.row-hits)'));
+        const headerRow = table.querySelector('thead tr');
+        const ipTh = headerRow.children[2];
+        if (!headerRow.querySelector('th[data-geo="country"]')) {
+            const countryTh = document.createElement('th'); countryTh.textContent = 'Страна'; countryTh.dataset.geo = 'country';
+            const cityTh = document.createElement('th'); cityTh.textContent = 'Город'; cityTh.dataset.geo = 'city';
+            const providerTh = document.createElement('th'); providerTh.textContent = 'Провайдер'; providerTh.dataset.geo = 'provider';
+            ipTh.after(countryTh); countryTh.after(cityTh); cityTh.after(providerTh);
+        }
+
+        const uniqueIPs = new Set();
+        rows.forEach(row => {
+            const ip = extractIP(row.children[2]?.textContent || '');
+            if (ip && isValidIP(ip)) uniqueIPs.add(ip);
+        });
+        const pageElement = document.querySelector('.pagination .active a[data-page]');
+        const currentPage = pageElement ? (parseInt(pageElement.getAttribute('data-page') || 0) + 1).toString() : '1';
+        const autoLoadIPs = currentPage === '1' ? Array.from(uniqueIPs).slice(0, 7) : [];
+
+        rows.forEach(row => {
+            const ipTd = row.children[2];
+            const ip = extractIP(ipTd?.textContent || '');
+            if (!ip || !isValidIP(ip)) return;
+            row.setAttribute('data-ip', ip);
+            ipTd.style.cursor = 'pointer';
+            ipTd.style.textDecoration = 'underline';
+            ipTd.style.color = 'blue';
+            ipTd.title = 'Клик — скопировать &dev-request-ip=' + ip;
+            ipTd.onclick = () => copyToClipboard(`&dev-request-ip=${ip}`, ipTd);
+
+            if (!row.querySelector('td[data-geo="country"]')) {
+                const countryTd = document.createElement('td'); countryTd.dataset.geo = 'country';
+                const cityTd = document.createElement('td'); cityTd.dataset.geo = 'city';
+                const providerTd = document.createElement('td'); providerTd.dataset.geo = 'provider';
+                ipTd.after(countryTd); countryTd.after(cityTd); cityTd.after(providerTd);
+            }
+
+            const countryTd = row.querySelector('td[data-geo="country"]');
+            const cityTd = row.querySelector('td[data-geo="city"]');
+            const providerTd = row.querySelector('td[data-geo="provider"]');
+
+            const cachedGeo = getCachedGeo(ip);
+            if (cachedGeo) {
+                countryTd.innerHTML = cachedGeo.country;
+                cityTd.innerHTML = cachedGeo.city;
+            } else if (autoLoadIPs.includes(ip)) {
+                countryTd.textContent = 'Загрузка...';
+                cityTd.textContent = 'Загрузка...';
+            } else {
+                const btn = document.createElement('button');
+                btn.textContent = 'Загрузить';
+                btn.onclick = e => {
+                    e.stopPropagation();
+                    btn.disabled = true; btn.textContent = 'Загрузка...';
+                    fetchGeo(ip).then(d => updateGeo(ip, d, rows));
+                };
+                countryTd.appendChild(btn);
+            }
+
+            if (!providerTd.innerHTML) {
+                const btn = document.createElement('button');
+                btn.textContent = 'Загрузить';
+                btn.onclick = e => {
+                    e.stopPropagation();
+                    btn.disabled = true; btn.textContent = 'Загрузка...';
+                    fetchWhois(ip).then(p => updateProvider(ip, p, rows));
+                };
+                providerTd.appendChild(btn);
+            }
+
+            let container = ipTd.querySelector('.blacklist-container');
+            if (!container) {
+                container = document.createElement('div');
+                container.className = 'blacklist-container';
+                container.style.fontSize = '0.8em';
+                container.style.color = '#666';
+                container.style.marginTop = '2px';
+                ipTd.appendChild(container);
+            }
+
+            const cachedBlack = getCachedBlack(ip);
+            if (cachedBlack) {
+                container.innerHTML = cachedBlack.blacklist;
+            } else {
+                const btn = document.createElement('button');
+                btn.textContent = 'Загрузить';
+                btn.style.fontSize = '0.8em';
+                btn.onclick = e => {
+                    e.stopPropagation();
+                    btn.disabled = true;
+                    btn.textContent = 'Загрузка...';
+                    setBlackLoading(ip, rows);
+                    fetchBlacklist(ip).then(data => {
+                        updateBlack(ip, data, rows);
+                        btn.remove();
+                    });
+                };
+                container.appendChild(btn);
+            }
+        });
+
+        if (autoLoadIPs.length > 0) {
+            let index = 0;
+            const next = () => {
+                if (index >= autoLoadIPs.length) {
+                    isProcessingTable = false;
+                    adjustSubtableColspan();
+                    return;
+                }
+                const ip = autoLoadIPs[index++];
+                fetchGeo(ip)
+                    .then(geoData => updateGeo(ip, geoData, rows))
+                    .finally(next);
+            };
+            next();
+        } else {
+            isProcessingTable = false;
+            adjustSubtableColspan();
+        }
+        return true;
+    }
+
+    const targetNode = document.querySelector('#tabContentVisits') || document.body;
+    const observer = new MutationObserver((mutations) => {
+        if (isProcessingTable) return;
+        let tableChanged = false;
+        let subtableAdded = false;
+        for (const mutation of mutations) {
+            if (mutation.addedNodes.length || mutation.removedNodes.length) {
+                const mainTableChanged = Array.from(mutation.addedNodes).some(node => node.nodeType === 1 && (
+                    node.matches('table.table.table-striped.table-bordered:not(.bg-gray)') ||
+                    node.querySelector('table.table.table-striped.table-bordered:not(.bg-gray)') ||
+                    (node.matches('tbody') && node.closest('table.table.table-striped.table-bordered:not(.bg-gray)'))
+                ));
+                const subTableChanged = Array.from(mutation.addedNodes).some(node => node.nodeType === 1 && (
+                    node.matches('tr.row-hits') || node.querySelector('tr.row-hits')
+                ));
+                if (mainTableChanged) tableChanged = true;
+                if (subTableChanged) subtableAdded = true;
+            }
+        }
+        if (tableChanged) initGeoLookup();
+        else if (subtableAdded) adjustSubtableColspan();
+    });
+
+    // === ТУМБЛЕР GEO LOOKUP (оригинальный) ===
+    function createGeoToggle() {
+        const toggleContainer = document.createElement('label');
+        toggleContainer.style.position = 'fixed';
+        toggleContainer.style.right = '1%';
+        toggleContainer.style.top = '15%';
+        toggleContainer.style.zIndex = '1000';
+        toggleContainer.style.display = 'flex';
+        toggleContainer.style.alignItems = 'center';
+        toggleContainer.style.cursor = 'pointer';
+        toggleContainer.style.background = 'rgba(255,255,255,0.9)';
+        toggleContainer.style.padding = '8px 12px';
+        toggleContainer.style.borderRadius = '8px';
+        toggleContainer.style.boxShadow = '0 2px 10px rgba(0,0,0,0.2)';
+
+        const toggleInput = document.createElement('input');
+        toggleInput.type = 'checkbox';
+        toggleInput.style.width = '22px';
+        toggleInput.style.height = '22px';
+        toggleInput.style.marginRight = '10px';
+        toggleInput.style.cursor = 'pointer';
+
+        const toggleLabel = document.createElement('span');
+        toggleLabel.textContent = 'Geo Lookup';
+        toggleLabel.style.fontSize = '15px';
+        toggleLabel.style.fontWeight = 'bold';
+        toggleLabel.style.color = '#333';
+
+        toggleContainer.appendChild(toggleInput);
+        toggleContainer.appendChild(toggleLabel);
+        document.body.appendChild(toggleContainer);
+
+        const isEnabled = sessionStorage.getItem('geoLookupEnabled') !== 'false';
+        toggleInput.checked = isEnabled;
+        if (isEnabled) {
+            observer.observe(targetNode, { childList: true, subtree: true });
+            initGeoLookup();
+        }
+
+        toggleInput.addEventListener('change', () => {
+            const table = document.querySelector('table.table.table-striped.table-bordered:not(.bg-gray)');
+            const rows = table ? Array.from(table.querySelectorAll('tbody tr:not(.row-hits)')) : [];
+            if (toggleInput.checked) {
+                console.log('Включаем Geo Lookup');
+                sessionStorage.setItem('geoLookupEnabled', 'true');
+                observer.observe(targetNode, { childList: true, subtree: true });
+                initGeoLookup();
+            } else {
+                console.log('Выключаем Geo Lookup');
+                sessionStorage.setItem('geoLookupEnabled', 'false');
+                disableGeoFeatures(rows);
+            }
+        });
+    }
+
+    // === НОВЫЙ ТУМБЛЕР: АВТОРАСКРЫТИЕ ХИТОВ ===
+    let hitsAbort = false;
+    let isExpandingHits = false;
+
+    async function expandAllHits() {
+        if (isExpandingHits) return;
+        isExpandingHits = true;
+        hitsAbort = false;
+
+        const links = Array.from(document.querySelectorAll('a.js-visit-hits'))
+            .filter(a => {
+                const row = a.closest('tr');
+                if (!row) return false;
+                const nextRow = row.nextElementSibling;
+                return !nextRow || !nextRow.classList.contains('row-hits');
+            });
+
+        console.log(`Начинаем раскрытие ${links.length} хитов...`);
+
+        for (const link of links) {
+            if (hitsAbort) {
+                console.log('Автораскрытие хитов прервано');
+                break;
+            }
+
+            const row = link.closest('tr');
+            const nextRow = row.nextElementSibling;
+            if (nextRow && nextRow.classList.contains('row-hits')) continue;
+
+            link.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+
+            try {
+                await new Promise((resolve) => {
+                    let resolved = false;
+                    const timeout = setTimeout(() => {
+                        if (!resolved) {
+                            resolved = true;
+                            resolve();
+                        }
+                    }, 10000);
+
+                    const check = () => {
+                        const currentNext = row.nextElementSibling;
+                        if (currentNext && currentNext.classList.contains('row-hits')) {
+                            if (!resolved) {
+                                resolved = true;
+                                clearTimeout(timeout);
+                                resolve();
+                            }
+                        }
+                    };
+
+                    const tempObserver = new MutationObserver(check);
+                    tempObserver.observe(row.parentNode, { childList: true, subtree: true });
+                    check();
+                });
+            } catch (e) { /* игнорируем таймауты */ }
+        }
+
+        console.log('Все хиты раскрыты');
+        isExpandingHits = false;
+    }
+
+    function createHitsToggle() {
+        const container = document.createElement('div');
+        container.style.position = 'fixed';
+        container.style.right = '1%';
+        container.style.top = '22%';
+        container.style.zIndex = '1000';
+        container.style.background = 'rgba(255,255,255,0.9)';
+        container.style.padding = '8px 12px';
+        container.style.borderRadius = '8px';
+        container.style.boxShadow = '0 2px 10px rgba(0,0,0,0.2)';
+
+        const label = document.createElement('label');
+        label.style.display = 'flex';
+        label.style.alignItems = 'center';
+        label.style.cursor = 'pointer';
+
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.style.width = '22px';
+        checkbox.style.height = '22px';
+        checkbox.style.marginRight = '10px';
+
+        const text = document.createElement('span');
+        text.textContent = 'Автораскрытие хитов';
+        text.style.fontSize = '15px';
+        text.style.fontWeight = 'bold';
+        text.style.color = '#333';
+
+        label.appendChild(checkbox);
+        label.appendChild(text);
+        container.appendChild(label);
+        document.body.appendChild(container);
+
+        checkbox.checked = false; // по умолчанию ВЫКЛЮЧЕНО
+
+        checkbox.addEventListener('change', () => {
+            if (checkbox.checked) {
+                console.log('Автораскрытие хитов: ВКЛ');
+                expandAllHits();
+            } else {
+                console.log('Автораскрытие хитов: ВЫКЛ');
+                hitsAbort = true;
+            }
+        });
+
+        // Сброс при смене страницы/фильтров
+        const resetHitsToggle = () => {
+            checkbox.checked = false;
+            hitsAbort = true;
+        };
+        const origPushState = history.pushState;
+        history.pushState = function() {
+            origPushState.apply(this, arguments);
+            resetHitsToggle();
+        };
+        window.addEventListener('popstate', resetHitsToggle);
+    }
+
+    // Запуск
+    createGeoToggle();
+    createHitsToggle();
+
+})();
