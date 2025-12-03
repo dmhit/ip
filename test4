@@ -6,6 +6,7 @@
     }
     console.log('Secure context:', window.isSecureContext, 'Protocol:', location.protocol);
 
+    // === ВЕСЬ ТВОЙ ОРИГИНАЛЬНЫЙ КОД (от isValidIP до initGeoLookup) ===
     function isValidIP(ip) {
         const ipRegex = /^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/;
         return ipRegex.test(ip);
@@ -41,7 +42,7 @@
         console.log(`Сохранены кэшированные данные blacklist для IP ${ip}:`, data);
     }
 
-    // ОЧЕРЕДИ
+    // ОЧЕРЕДИ (geo + blacklist) — без изменений
     const geoRequestQueue = [];
     let isProcessingGeoQueue = false;
     const geoDelay = 1000;
@@ -424,9 +425,14 @@
                 if (subTableChanged) subtableAdded = true;
             }
         }
+
         if (tableChanged) {
             initGeoLookup();
-            // СБРАСЫВАЕМ ТУМБЛЕР ХИТОВ ПРИ ЛЮБОМ ОБНОВЛЕНИИ ТАБЛИЦЫ
+            // МГНОВЕННО ПРЕРЫВАЕМ РАСКРЫТИЕ ХИТОВ ПРИ СМЕНЕ СТРАНИЦЫ
+            if (window.hitsAbortController) {
+                window.hitsAbortController.abort();
+                console.log('Раскрытие хитов принудительно прервано (смена страницы)');
+            }
             if (window.hitsToggleCheckbox) {
                 window.hitsToggleCheckbox.checked = false;
             }
@@ -485,14 +491,15 @@
         });
     }
 
-    // НОВЫЙ ТУМБЛЕР: АВТОРАСКРЫТИЕ ХИТОВ
-    let hitsAbort = false;
+    // === НОВЫЙ ТУМБЛЕР: АВТОРАСКРЫТИЕ ХИТОВ (с AbortController) ===
     let isExpandingHits = false;
 
     async function expandAllHits() {
         if (isExpandingHits) return;
         isExpandingHits = true;
-        hitsAbort = false;
+
+        const abortController = new AbortController();
+        window.hitsAbortController = abortController; // для внешнего прерывания
 
         const links = Array.from(document.querySelectorAll('a.js-visit-hits'))
             .filter(a => {
@@ -504,45 +511,53 @@
 
         console.log(`Начинаем раскрытие ${links.length} хитов...`);
 
-        for (const link of links) {
-            if (hitsAbort) {
-                console.log('Автораскрытие прервано пользователем');
-                break;
-            }
+        try {
+            for (const link of links) {
+                if (abortController.signal.aborted) {
+                    console.log('Раскрытие прервано (abort signal)');
+                    break;
+                }
 
-            const row = link.closest('tr');
-            if (row.nextElementSibling?.classList.contains('row-hits')) continue;
+                const row = link.closest('tr');
+                if (row.nextElementSibling?.classList.contains('row-hits')) continue;
 
-            link.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+                link.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
 
-            await new Promise(resolve => {
-                let resolved = false;
-                const timeout = setTimeout(() => {
-                    if (!resolved) {
-                        resolved = true;
-                        console.log('Таймаут ожидания подтаблицы — идём дальше');
-                        resolve();
-                    }
-                }, 8000);
-
-                const check = () => {
-                    if (row.nextElementSibling?.classList.contains('row-hits')) {
-                        if (!resolved) {
-                            resolved = true;
+                // Ждём подтаблицу или abort
+                await Promise.race([
+                    new Promise(resolve => {
+                        const check = () => {
+                            if (row.nextElementSibling?.classList.contains('row-hits')) {
+                                resolve();
+                            }
+                        };
+                        const obs = new MutationObserver(check);
+                        obs.observe(row.parentNode, { childList: true, subtree: true });
+                        check();
+                        abortController.signal.addEventListener('abort', () => {
+                            obs.disconnect();
+                            resolve();
+                        });
+                    }),
+                    new Promise(resolve => {
+                        const timeout = setTimeout(() => {
+                            console.log('Таймаут 8 сек — идём дальше');
+                            resolve();
+                        }, 8000);
+                        abortController.signal.addEventListener('abort', () => {
                             clearTimeout(timeout);
                             resolve();
-                        }
-                    }
-                };
-
-                const tempObs = new MutationObserver(check);
-                tempObs.observe(row.parentNode, { childList: true, subtree: true });
-                check();
-            });
+                        });
+                    })
+                ]);
+            }
+        } catch (err) {
+            if (!abortController.signal.aborted) console.error(err);
         }
 
-        console.log('Все доступные хиты раскрыты');
         isExpandingHits = false;
+        window.hitsAbortController = null;
+        console.log('Раскрытие хитов завершено или прервано');
     }
 
     function createHitsToggle() {
@@ -571,7 +586,7 @@
         toggleContainer.appendChild(toggleLabel);
         document.body.appendChild(toggleContainer);
 
-        window.hitsToggleCheckbox = toggleInput; // для сброса при смене страницы
+        window.hitsToggleCheckbox = toggleInput;
 
         toggleInput.addEventListener('change', () => {
             if (toggleInput.checked) {
@@ -579,7 +594,9 @@
                 expandAllHits();
             } else {
                 console.log('Автораскрытие хитов: ВЫКЛ');
-                hitsAbort = true;
+                if (window.hitsAbortController) {
+                    window.hitsAbortController.abort();
+                }
             }
         });
     }
